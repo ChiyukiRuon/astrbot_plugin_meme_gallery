@@ -134,8 +134,15 @@ class MemeGallery(Star):
             canonical = await asyncio.to_thread(self.store.require_gallery, command.target)
             if command.option:
                 operation = self.store.add_alias if command.option == "添加" else self.store.remove_alias
-                await asyncio.to_thread(operation, canonical, command.alias)
-                text = f"已为图库“{canonical}”{command.option}别名“{command.alias}”。"
+                results = []
+                for alias in command.aliases:
+                    try:
+                        await asyncio.to_thread(operation, canonical, alias)
+                    except ValueError as exc:
+                        results.append(str(exc))
+                    else:
+                        results.append(f"已为图库“{canonical}”{command.option}别名“{alias}”。")
+                text = "\n".join(results)
             else:
                 aliases = await asyncio.to_thread(self.store.aliases, canonical)
                 text = f"图库“{canonical}”的别名：" + ("、".join(aliases) if aliases else "暂无别名。")

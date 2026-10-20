@@ -11,7 +11,7 @@ class Command:
     count: int = 1
     ids: tuple[int, ...] = ()
     option: str = ""
-    alias: str = ""
+    aliases: tuple[str, ...] = ()
     gallery_id: int | None = None
 
 
@@ -42,13 +42,13 @@ def parse_command(text: str) -> Command | None:
         try:
             args = shlex.split(text[len("图库别名"):].strip())
         except ValueError:
-            raise ValueError("引号未闭合；用法：图库别名 图库名 [添加/删除 别名]。") from None
+            raise ValueError("引号未闭合；用法：图库别名 图库名 [添加/删除 别名1 别名2 ...]。") from None
         if len(args) == 1:
             return Command("alias", gallery_name(args[0]))
-        if len(args) == 3 and args[1] in ("添加", "删除"):
+        if len(args) >= 3 and args[1] in ("添加", "删除"):
             return Command("alias", gallery_name(args[0]), option=args[1],
-                           alias=gallery_name(args[2]))
-        raise ValueError("用法：图库别名 图库名 [添加/删除 别名]；含空格的名称请用双引号包围。")
+                           aliases=tuple(dict.fromkeys(gallery_name(arg) for arg in args[2:])))
+        raise ValueError("用法：图库别名 图库名 [添加/删除 别名1 别名2 ...]；含空格的名称请用双引号包围。")
     if text == "删除" or text.startswith("删除 "):
         rest = text[2:].strip()
         if not re.fullmatch(r"\d+(?:\s+\d+)*", rest):

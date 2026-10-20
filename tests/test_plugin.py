@@ -282,6 +282,22 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.on_message(Event("图库别名 猫 删除 小猫"))
         self.assertEqual(self.plugin.store.aliases("猫"), [])
 
+    async def test_multiple_aliases_and_partial_failures(self):
+        event = Event("图库别名 猫 添加 小猫 猫 猫咪 喵喵 小猫")
+        await self.plugin.on_message(event)
+        self.assertEqual(self.plugin.store.aliases("猫"), ["小猫", "猫咪", "喵喵"])
+        text = event.bot.calls[-1][1]["message"][-1]["data"]["text"]
+        self.assertEqual(text.count("添加别名"), 3)
+        self.assertIn("占用", text)
+        event = Event("图库别名 小猫 删除 小猫 不存在 猫 猫咪 喵喵 小猫")
+        await self.plugin.on_message(event)
+        self.assertEqual(self.plugin.store.aliases("猫"), [])
+        self.assertEqual(self.plugin.store.require_gallery("猫"), "猫")
+        text = event.bot.calls[-1][1]["message"][-1]["data"]["text"]
+        self.assertEqual(text.count("删除别名"), 3)
+        self.assertIn("不存在别名“不存在”", text)
+        self.assertIn("不存在别名“猫”", text)
+
     async def test_delete_command_partial_success(self):
         image_id, _ = self.plugin.store.add("猫", encoded())
         event = Event(f"删除 {image_id} 999 {image_id}")

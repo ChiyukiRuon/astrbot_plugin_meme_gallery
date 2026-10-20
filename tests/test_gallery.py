@@ -49,7 +49,7 @@ class CommandsTests(unittest.TestCase):
     def test_alias_and_delete_commands(self):
         self.assertEqual(parse_command("图库别名 猫").action, "alias")
         command = parse_command('图库别名 "猫 猫" 添加 "小 猫"')
-        self.assertEqual((command.target, command.option, command.alias), ("猫 猫", "添加", "小 猫"))
+        self.assertEqual((command.target, command.option, command.aliases), ("猫 猫", "添加", ("小 猫",)))
         self.assertEqual(parse_command("图库别名 猫 删除 小猫").option, "删除")
         self.assertEqual(parse_command("删除 1 2 1").ids, (1, 2))
         for text in ("图库别名", "图库别名 猫 添加", "图库别名 猫 修改 小猫",
@@ -57,6 +57,17 @@ class CommandsTests(unittest.TestCase):
                      "删除 99999999999999999999999"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 parse_command(text)
+
+    def test_multiple_aliases(self):
+        for operation in ("添加", "删除"):
+            with self.subTest(operation=operation):
+                command = parse_command(f"图库别名 猫 {operation} 小猫 猫咪 喵喵 小猫")
+                self.assertEqual(command.aliases, ("小猫", "猫咪", "喵喵"))
+                command = parse_command(f'图库别名 猫 {operation} 小猫 "小 猫"')
+                self.assertEqual(command.aliases, ("小猫", "小 猫"))
+                for invalid in ('""', '123', '猫x2'):
+                    with self.assertRaises(ValueError):
+                        parse_command(f"图库别名 猫 {operation} 小猫 {invalid}")
 
     def test_gallery_commands(self):
         self.assertEqual(parse_command("图库帮助").action, "help")
