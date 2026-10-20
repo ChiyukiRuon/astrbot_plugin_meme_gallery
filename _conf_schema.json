@@ -1,0 +1,37 @@
+{
+  "multi_image_mode": {
+    "description": "多张图片发送方式",
+    "type": "string",
+    "options": ["direct", "forward"],
+    "default": "direct",
+    "hint": "direct 为一条消息发送，forward 为合并转发，每张图片一个节点。"
+  },
+  "forward_threshold": {
+    "description": "强制合并转发的图片数量阈值",
+    "type": "int",
+    "default": 5,
+    "hint": "图片数量超过此值时强制合并转发。"
+  },
+  "send_as_meme": {
+    "description": "以表情包形式发送",
+    "type": "bool",
+    "default": true,
+    "hint": "使用 OneBot 图片 sub_type=1，需要协议端支持。"
+  },
+  "wait_timeout": {
+    "description": "等待后续图片的秒数",
+    "type": "int",
+    "default": 120
+  },
+  "max_download_mb": {
+    "description": "单张图片最大下载体积（MB）",
+    "type": "int",
+    "default": 20
+  },
+  "font_path": {
+    "description": "缩略图中文字体路径",
+    "type": "string",
+    "default": "",
+    "hint": "留空自动寻找系统中文字体；Docker 中建议安装 Noto CJK 字体。"
+  }
+}
