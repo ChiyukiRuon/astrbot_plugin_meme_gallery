@@ -28,10 +28,16 @@
     "type": "int",
     "default": 20
   },
-  "font_path": {
-    "description": "缩略图中文字体路径",
+  "font_dir": {
+    "description": "字体文件夹路径",
     "type": "string",
     "default": "",
-    "hint": "留空自动寻找系统中文字体；Docker 中建议安装 Noto CJK 字体。"
+    "hint": "读取文件夹内的 TTF、OTF、TTC、OTC 字体（不递归）。Docker 请填写容器内路径；留空寻找系统字体。"
+  },
+  "font_order": {
+    "description": "字体优先级（文件名从前到后）",
+    "type": "list",
+    "default": [],
+    "hint": "填写 font_dir 中的完整文件名，如 NotoSansCJK-Regular.ttc。首项为主要字体，缺字时依次回退；未列出的文件按文件名排序追加。"
   }
 }

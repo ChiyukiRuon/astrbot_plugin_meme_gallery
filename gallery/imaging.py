@@ -1,11 +1,12 @@
 import hashlib
 import io
 import math
-import os
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageOps, UnidentifiedImageError
+
+from .fonts import load_fonts
 
 MAX_PIXELS = 16_000_000
 MAX_FRAMES = 500
@@ -94,20 +95,11 @@ def transform(data: bytes, action: str, option: str = "") -> bytes:
     return output.getvalue()
 
 
-def load_font(path: str, size: int = 20):
-    candidates = [path, "C:/Windows/Fonts/msyh.ttc",
-                  "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                  "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc"]
-    for candidate in candidates:
-        if candidate and os.path.isfile(candidate):
-            return ImageFont.truetype(candidate, size)
-    raise ValueError("未找到中文字体，请在插件配置中填写 font_path。")
-
-
 def help_image(font_path: str = "", wait_timeout: int = 120,
-               forward_threshold: int = 5, multi_image_mode: str = "direct") -> bytes:
-    font = load_font(font_path, 24)
-    heading = load_font(font_path, 34)
+               forward_threshold: int = 5, multi_image_mode: str = "direct", *,
+               font_dir: str = "", font_order=()) -> bytes:
+    font = load_fonts(font_dir, 24, font_order, font_path)
+    heading = load_fonts(font_dir, 34, font_order, font_path)
     sections = [
         ("图库管理", [
             "图库帮助  →  查看本帮助图片",
@@ -147,22 +139,20 @@ def help_image(font_path: str = "", wait_timeout: int = 120,
             "图库名不能为纯数字，不能以 x数字、*数字或空格加数字结尾。",
             f"多图发送：{'合并转发' if multi_image_mode == 'forward' else '一条消息'}；"
             f"超过 {forward_threshold} 张强制合并转发。",
-            "发送方式、表情包模式、等待时间和中文字体可在插件配置调整。",
+            "发送方式、表情包模式、等待时间、字体文件夹和字体优先级可在插件配置调整。",
         ]),
     ]
-    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-    width = max(1000, math.ceil(max(measure.textlength(line, font=font)
+    width = max(1000, math.ceil(max(font.length(line)
                                    for _, lines in sections for line in lines)) + 80)
     height = 110 + sum(60 + len(lines) * 40 + 24 for _, lines in sections)
     result = Image.new("RGB", (width, height), "#f5f5f5")
-    draw = ImageDraw.Draw(result)
-    draw.text((40, 24), "表情包图库 · 使用帮助", font=heading, fill="#222222")
+    heading.draw(result, (40, 24), "表情包图库 · 使用帮助", fill="#222222")
     y = 100
     for title, lines in sections:
-        draw.text((40, y), title, font=heading, fill="#3455a4")
+        heading.draw(result, (40, y), title, fill="#3455a4")
         y += 60
         for line in lines:
-            draw.text((40, y), line, font=font, fill="#222222")
+            font.draw(result, (40, y), line, fill="#222222")
             y += 40
         y += 24
     output = io.BytesIO()
@@ -171,24 +161,17 @@ def help_image(font_path: str = "", wait_timeout: int = 120,
 
 
 def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: str = "",
-                  aliases: list[str] | None = None) -> bytes:
-    font = load_font(font_path)
+                  aliases: list[str] | None = None, *, font_dir: str = "", font_order=()) -> bytes:
+    font = load_fonts(font_dir, 20, font_order, font_path)
     columns = min(5, max(1, len(items)))
     rows = math.ceil(len(items) / columns)
     width = columns * 200
-    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     header = [title]
     if aliases is not None:
         header.append("别名：" + ("、".join(aliases) if aliases else "暂无"))
     lines = []
     for text in header:
-        line = ""
-        for character in text:
-            if line and measure.textlength(line + character, font=font) > width - 24:
-                lines.append(line)
-                line = ""
-            line += character
-        lines.append(line)
+        lines.extend(font.wrap(text, width - 24))
     header_height = max(60, len(lines) * 30 + 24)
     # Keep the complete gallery in one image, while avoiding unbounded allocation.
     if width * (rows * 200 + header_height) > MAX_PIXELS:
@@ -196,20 +179,19 @@ def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: s
     sheet = Image.new("RGB", (width, max(100, rows * 200 + header_height)), "#f5f5f5")
     draw = ImageDraw.Draw(sheet)
     for index, line in enumerate(lines):
-        draw.text((12, 12 + index * 30), line, font=font, fill="#222222")
+        font.draw(sheet, (12, 12 + index * 30), line, fill="#222222")
     for index, (path, label) in enumerate(items):
         x, y = index % columns * 200, index // columns * 200 + header_height
         if path is None:
             draw.rounded_rectangle((x + 10, y, x + 190, y + 150), radius=12, fill="#e5e7eb")
-            draw.text((x + 60, y + 60), "空图库", font=font, fill="#666666")
+            font.draw(sheet, (x + 60, y + 60), "空图库", fill="#666666")
         else:
             with Image.open(path) as image:
                 thumb = ImageOps.exif_transpose(image).convert("RGBA")
                 thumb.thumbnail((180, 150))
                 sheet.paste(thumb, (x + (200 - thumb.width) // 2, y), thumb)
-        while draw.textlength(label, font=font) > 184:
-            label = label[:-2] + "…"
-        draw.text((x + 8, y + 158), label, font=font, fill="#222222")
+        label = font.ellipsize(label, 184)
+        font.draw(sheet, (x + 8, y + 158), label, fill="#222222")
     output = io.BytesIO()
     sheet.save(output, format="PNG")
     return output.getvalue()

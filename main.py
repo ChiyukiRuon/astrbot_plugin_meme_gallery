@@ -121,6 +121,8 @@ class MemeGallery(Star):
                 self.number_config("wait_timeout", 120),
                 self.number_config("forward_threshold", 5, 0),
                 self.config.get("multi_image_mode", "direct"),
+                font_dir=self.config.get("font_dir", ""),
+                font_order=self.config.get("font_order", []),
             )
             await self.send_images(event, [data], preview=True)
         elif command.action == "create":
@@ -174,6 +176,8 @@ class MemeGallery(Star):
             data = await asyncio.to_thread(
                 contact_sheet, items, title,
                 self.config.get("font_path", ""), aliases,
+                font_dir=self.config.get("font_dir", ""),
+                font_order=self.config.get("font_order", []),
             )
             await self.send_images(event, [data], preview=True)
         elif command.action == "view":

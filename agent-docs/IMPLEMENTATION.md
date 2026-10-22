@@ -6,6 +6,8 @@
 - `gallery/commands.py`: command parsing and validation.
 - `gallery/storage.py`: SQLite metadata, persistent original files, gallery-scoped deduplication.
 - `gallery/imaging.py`: frame decoding, DCT pHash, transformations, contact sheets.
+- `gallery/fonts.py`: ordered directory fonts, cached cmap coverage, grapheme fallback,
+  bidi run ordering, shared measurement/rendering, and bitmap color-font scaling.
 - `gallery/onebot.py`: CQ/array parsing, first-level forward extraction, bounded HTTP download, native OneBot sending.
 - `tests/`: domain tests and handler tests using explicit AstrBot/transport mocks.
 
@@ -48,6 +50,15 @@ The plugin uses native OneBot actions because AstrBot's Image serializer drops `
 No Git repository existed at implementation time; no commit or push was performed.
 
 ## Validation boundary
+
+Font configuration uses `font_dir` and `font_order`; legacy `font_path` remains an
+internal fallback when no directory is configured. Explicit directories never add
+system fonts. File metadata participates in cache keys; collection files use face 0.
+Coverage is not proof of an emoji sequence ligature. Pillow RAQM is required for
+RTL rendering, and recommended for all complex scripts and emoji sequences.
+python-bidi's Python algorithm provides run levels; Pillow shapes logical runs.
+Unicode bidi isolates are currently rejected. Test real fonts and RAQM builds when
+assessing complex-script/emoji fidelity; unit tests alone cannot establish it.
 
 Local tests run with Python 3.12, Pillow, and NumPy.
 Handler tests mock AstrBot and HTTP session creation; they do not establish real framework or protocol connectivity.

@@ -247,6 +247,14 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(segment["data"]["sub_type"], 0)
         self.assertTrue(event.stopped)
 
+    async def test_font_settings_reach_help_and_preview(self):
+        self.plugin.config.update({'font_dir': '/fonts', 'font_order': ['main.ttf', 'emoji.ttf']})
+        for command, renderer in (("图库帮助", "help_image"), ("看所有猫", "contact_sheet")):
+            with patch.object(plugin, renderer, return_value=encoded()) as render:
+                await self.plugin.on_message(Event(command))
+                self.assertEqual(render.call_args.kwargs['font_dir'], '/fonts')
+                self.assertEqual(render.call_args.kwargs['font_order'], ['main.ttf', 'emoji.ttf'])
+
     async def test_empty_gallery_listing_and_view(self):
         event = Event("图库列表")
         await self.plugin.on_message(event)
