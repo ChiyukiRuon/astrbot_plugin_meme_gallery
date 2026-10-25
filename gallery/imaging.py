@@ -134,6 +134,7 @@ def help_image(font_path: str = "", wait_timeout: int = 120,
             "上传结果回复原指令，列出成功数量、图片 ID 和失败原因。",
         ]),
         ("提示", [
+            "WebUI 插件详情 → 图库管理：管理图库、图片，批量导入本地图片。",
             "命令前缀跟随 AstrBot 设置；方括号为可选参数，无需输入。",
             "也可按 AstrBot 的规则通过 @ 机器人或私聊触发命令。",
             "图库名不能为纯数字，不能以 x数字、*数字或空格加数字结尾。",
@@ -161,8 +162,10 @@ def help_image(font_path: str = "", wait_timeout: int = 120,
 
 
 def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: str = "",
-                  aliases: list[str] | None = None, *, font_dir: str = "", font_order=()) -> bytes:
+                  aliases: list[str] | None = None, *, font_dir: str = "", font_order=(),
+                  counts: list[int] | None = None, show_gif_badge: bool = True) -> bytes:
     font = load_fonts(font_dir, 20, font_order, font_path)
+    small_font = load_fonts(font_dir, 16, font_order, font_path)
     columns = min(5, max(1, len(items)))
     rows = math.ceil(len(items) / columns)
     width = columns * 200
@@ -187,10 +190,16 @@ def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: s
             font.draw(sheet, (x + 60, y + 60), "空图库", fill="#666666")
         else:
             with Image.open(path) as image:
+                animated = show_gif_badge and getattr(image, "n_frames", 1) > 1
                 thumb = ImageOps.exif_transpose(image).convert("RGBA")
                 thumb.thumbnail((180, 150))
                 sheet.paste(thumb, (x + (200 - thumb.width) // 2, y), thumb)
-        label = font.ellipsize(label, 184)
+                if animated:
+                    draw.rounded_rectangle((x + 140, y + 6, x + 190, y + 32),
+                                           radius=6, fill="#262626")
+                    small_font.draw(sheet, (x + 150, y + 9), "GIF", fill="#ffffff")
+        suffix = f"({counts[index]})" if counts is not None else ""
+        label = font.ellipsize(label, max(0, int(184 - font.length(suffix)))) + suffix
         font.draw(sheet, (x + 8, y + 158), label, fill="#222222")
     output = io.BytesIO()
     sheet.save(output, format="PNG")

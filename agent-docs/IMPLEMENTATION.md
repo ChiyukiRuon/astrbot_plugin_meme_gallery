@@ -1,6 +1,33 @@
 # Implementation notes
 
+## Official development references
+
+- [AstrBot plugin development guide](https://docs.astrbot.app/dev/star/plugin-new.html): primary reference for plugin development and framework integration.
+- [AstrBot plugin views](https://docs.astrbot.app/dev/star/guides/plugin-pages.html): reference for the management view, bridge, and plugin Web API.
+
+Consult these official documents and the local AstrBot source before changing framework integrations. Verify API availability against the target AstrBot version.
+
+## AstrBot compatibility
+
+Plugin v0.3.0 declares `astrbot_version: ">=4.29.0,<5"` using the official PEP 440 metadata field. The lower bound comes from the actual view contract: [v4.28.2 bridge](https://github.com/AstrBotDevs/AstrBot/blob/v4.28.2/astrbot/dashboard/plugin_page_bridge.js) lacks `AstrBotPluginView`, while [v4.29.0 bridge](https://github.com/AstrBotDevs/AstrBot/blob/v4.29.0/astrbot/dashboard/plugin_page_bridge.js) exposes it. The v4.29.0 view service supports `views/`, and its public Web API provides the request, response, upload read/close, and response-header interfaces used here. The next major version is excluded pending compatibility review.
+
+This is a source-verified API compatibility floor, not a claim of full runtime testing on every supported release. Independent browser integration checks used official 4.29.3 source APIs and SDK; complete AstrBot startup/login remains unverified. The missing-Web-API fallback is defensive only and does not expand the declared support range.
+
 ## Structure
+
+- `gallery/web.py`: AstrBot public Web API handlers registered during initialization; all expensive work shares the chat work lock.
+- `views/manage/`: dependency-free plugin view using only the injected AstrBotPluginView bridge, with sequential per-file import and first-frame PNG previews.
+- `.astrbot-plugin/i18n/zh-CN.json`: view title and description.
+
+List thumbnails remain first-frame PNGs. Clicking a thumbnail opens an original-image
+dialog through `images/<image_id>/original`, returning the exact stored bytes as a
+MIME-typed data URL over the authenticated bridge. No image re-encoding occurs;
+browser-supported animations preserve their original timing and looping. The dialog
+supports fit-to-window and natural size, clears image sources on close, and ignores
+late responses from closed viewers. Tests assert byte identity and observe changing
+GIF pixels in the sandboxed browser view.
+
+The view follows the official plugin-pages contract. No independent HTTP server or authentication layer is used. Missing public Web API support disables only registration, retaining chat functionality. Closed handlers reject requests after termination. Gallery mutations resolve stable IDs under the storage lock. Gallery deletion stages all files before one transaction; replacement uses a unique `.replacement.img` file and stages the old file. Startup removes unreferenced replacement files and restores/cleans staged deletions according to database state. UI pagination is capped at 20 images, and uploads reuse max_download_mb and existing decode/deduplication constraints.
 
 - `main.py`: AstrBot lifecycle, event dispatch, pending requests, bounded processing.
 - `gallery/commands.py`: command parsing and validation.
@@ -50,6 +77,16 @@ The plugin uses native OneBot actions because AstrBot's Image serializer drops `
 No Git repository existed at implementation time; no commit or push was performed.
 
 ## Validation boundary
+
+For the optional browser integration check, install `fastapi`, `python-multipart`,
+and `playwright` in a test environment with local Chrome, then run:
+`python tests/verify_web_view.py --astrbot <official-source-root> --output <temporary-screenshot-directory>`.
+This uses the unmodified official `astrbot.api.web` module and bridge SDK with a
+minimal Dashboard host in a sandboxed iframe. It exercises real multipart parsing,
+creation, mixed import results, rename, replacement, move, deletion, desktop/mobile
+layout, and dark context updates. It does not exercise full core initialization,
+login/authentication, view discovery, or QQ integration. Test gallery files are
+isolated in an automatically cleaned temporary directory.
 
 Font configuration uses `font_dir` and `font_order`; legacy `font_path` remains an
 internal fallback when no directory is configured. Explicit directories never add

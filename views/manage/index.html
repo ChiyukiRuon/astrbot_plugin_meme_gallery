@@ -1,0 +1,54 @@
+<!doctype html>
+<!-- 视觉层级：图片为主、图库导航为次、ID 与数量为辅助；主操作为导入图片。
+     使用灰阶、4/8/12/16/24/32 间距、14/16/20/28 字号、8/16 圆角。 -->
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>图库管理</title>
+    <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+    <header class="topbar"><div><span class="eyebrow">表情包图库</span><h1>图库管理</h1></div><button id="refresh">刷新</button></header>
+    <p id="notice" role="status" aria-live="polite">正在连接 AstrBot…</p>
+    <div class="workspace">
+        <aside aria-label="图库导航">
+            <div class="section-title"><h2>我的图库</h2><button id="create" aria-label="新建图库">＋ 新建</button></div>
+            <label class="sr-only" for="gallery-search">搜索图库或别名</label>
+            <input id="gallery-search" type="search" placeholder="搜索图库或别名" maxlength="80">
+            <nav id="galleries" aria-label="选择图库"></nav>
+        </aside>
+        <main>
+            <section class="gallery-heading">
+                <div><span class="eyebrow" id="scope">图片收藏</span><h2 id="gallery-title">全部图片</h2><p id="aliases" class="muted"></p></div>
+                <div class="actions"><button id="edit-gallery" hidden>管理图库</button><button id="import" class="primary" disabled>导入图片</button></div>
+            </section>
+            <form id="search-form" class="toolbar">
+                <label class="sr-only" for="image-search">按图片 ID 查找</label><input id="image-search" type="search" placeholder="输入完整图片 ID 查找" inputmode="numeric">
+                <button type="submit">查找</button><span id="total" class="muted"></span>
+            </form>
+            <div class="selection-bar"><label><input id="select-all" type="checkbox"> 选择本页</label><span id="selected-count" class="muted">已选 0 张</span><button id="delete-selected" disabled>删除所选</button></div>
+            <div id="images" class="image-grid" aria-busy="false"></div>
+            <div id="empty" class="empty" hidden><h3>这里还没有图片</h3><p>选择或新建一个图库，然后导入你的收藏。</p></div>
+            <footer class="pagination"><button id="previous" disabled>上一页</button><span id="page">第 1 页</span><button id="next" disabled>下一页</button></footer>
+        </main>
+    </div>
+    <dialog id="original-dialog" aria-labelledby="original-title">
+        <div class="section-title"><h2 id="original-title">查看原图</h2><div class="actions"><button id="original-size" disabled>原始尺寸</button><button id="close-original">关闭</button></div></div>
+        <p id="original-status" role="status"></p>
+        <div id="original-stage"><img id="original-image" alt="" hidden></div>
+    </dialog>
+    <dialog id="editor" aria-labelledby="editor-title">
+        <form id="editor-form"><div class="section-title"><h2 id="editor-title"></h2><button type="button" id="close-editor" aria-label="关闭">关闭</button></div><div id="editor-content"></div><p id="editor-error" role="alert"></p><div class="dialog-actions"><button type="submit" id="editor-submit" class="primary">保存</button></div></form>
+    </dialog>
+    <dialog id="import-dialog" aria-labelledby="import-title">
+        <div class="section-title"><h2 id="import-title">批量导入</h2><button id="close-import">关闭</button></div>
+        <p id="import-target" class="muted"></p>
+        <div class="upload-options"><label class="file-picker">选择图片<input id="files" type="file" accept="image/*" multiple></label><label class="file-picker">选择文件夹<input id="folder" type="file" accept="image/*" webkitdirectory multiple></label></div>
+        <p class="muted">保留原图，同一图库自动去重。文件夹中的文件逐张校验，不支持压缩包。</p>
+        <p id="queue-count">尚未选择文件</p><progress id="progress" value="0" max="1"></progress><p id="import-summary" role="status"></p>
+        <ol id="import-results" class="results"></ol><div class="dialog-actions"><button id="cancel-import" hidden>停止后续导入</button><button id="start-import" class="primary" disabled>开始导入</button></div>
+    </dialog>
+    <script type="module" src="./app.js"></script>
+</body>
+</html>

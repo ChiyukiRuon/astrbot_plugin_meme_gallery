@@ -359,6 +359,47 @@ class StoreTests(unittest.TestCase):
             with Image.open(io.BytesIO(result)) as image:
                 self.assertEqual(image.size, (200, 260))
 
+    def test_sheet_animation_badge_and_counts(self):
+        from gallery.fonts import load_fonts
+
+        with tempfile.TemporaryDirectory() as root:
+            static = Path(root) / "static.img"
+            animated = Path(root) / "animated.img"
+            static.write_bytes(encoded())
+            animated.write_bytes(animation())
+            font_type = type(load_fonts("", 16, (), ""))
+            original_draw = font_type.draw
+            texts = []
+
+            def record(font, image, position, text, **kwargs):
+                texts.append(text)
+                return original_draw(font, image, position, text, **kwargs)
+
+            with patch.object(font_type, "draw", record):
+                data = contact_sheet([(static, "静图"), (animated, "动图"), (None, "空图库")],
+                                     "图库列表", counts=[1, 2, 0], show_gif_badge=False)
+            self.assertNotIn("GIF", texts)
+            for label in ("静图(1)", "动图(2)", "空图库(0)"):
+                self.assertIn(label, texts)
+            with Image.open(io.BytesIO(data)) as image:
+                self.assertEqual(image.size, (600, 260))
+            texts.clear()
+            with patch.object(font_type, "draw", record):
+                contact_sheet([(static, "ID 1"), (animated, "ID 2")], "图库图片")
+            self.assertEqual(texts.count("GIF"), 1)
+
+    def test_cover_counts_after_dedup_and_deletion(self):
+        with tempfile.TemporaryDirectory() as root:
+            store = GalleryStore(Path(root))
+            store.create("猫")
+            store.create("空图库")
+            first, _ = store.add("猫", encoded())
+            store.add("猫", encoded())
+            store.add("猫", animation())
+            self.assertEqual([row["count"] for row in store.covers()], [2, 0])
+            store.delete((first,))
+            self.assertEqual([row["count"] for row in store.covers()], [1, 0])
+
     def test_help_and_empty_cover_images(self):
         for data in (help_image(), contact_sheet([(None, "空图库")], "图库列表")):
             with Image.open(io.BytesIO(data)) as image:

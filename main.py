@@ -29,6 +29,18 @@ class MemeGallery(Star):
         self.pending: dict[tuple[str, str, str], Pending] = {}
         self.session: aiohttp.ClientSession | None = None
         self.work_lock = asyncio.Lock()
+        self.web_admin = None
+
+    async def initialize(self):
+        try:
+            from .gallery.web import WebAdmin
+        except ModuleNotFoundError as exc:
+            if exc.name != "astrbot.api.web":
+                raise
+            logger.warning("当前 AstrBot 不支持插件可视化视图 API，请升级 AstrBot 后使用图库管理页面。")
+            return
+        self.web_admin = WebAdmin(self.store, self.work_lock, self.config)
+        self.web_admin.register(self.context)
 
     def number_config(self, key: str, default: int, minimum: int = 1) -> int:
         try:
@@ -178,6 +190,8 @@ class MemeGallery(Star):
                 self.config.get("font_path", ""), aliases,
                 font_dir=self.config.get("font_dir", ""),
                 font_order=self.config.get("font_order", []),
+                counts=[row["count"] for row in rows] if command.action == "list" else None,
+                show_gif_badge=command.action == "sheet",
             )
             await self.send_images(event, [data], preview=True)
         elif command.action == "view":
@@ -226,6 +240,8 @@ class MemeGallery(Star):
             await self.send_images(event, [result])
 
     async def terminate(self):
+        if self.web_admin is not None:
+            self.web_admin.closed = True
         self.pending.clear()
         if self.session and not self.session.closed:
             await self.session.close()

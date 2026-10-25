@@ -306,6 +306,17 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("不存在别名“不存在”", text)
         self.assertIn("不存在别名“猫”", text)
 
+    async def test_gallery_list_includes_counts(self):
+        self.plugin.store.add("猫", encoded())
+        self.plugin.store.create("空图库")
+        with patch.object(plugin, "contact_sheet", return_value=encoded()) as render:
+            await self.plugin.on_message(Event("看所有"))
+            self.assertEqual(render.call_args.kwargs["counts"], [1, 0])
+            self.assertFalse(render.call_args.kwargs["show_gif_badge"])
+        with patch.object(plugin, "contact_sheet", return_value=encoded()) as render:
+            await self.plugin.on_message(Event("看所有猫"))
+            self.assertTrue(render.call_args.kwargs["show_gif_badge"])
+
     async def test_delete_command_partial_success(self):
         image_id, _ = self.plugin.store.add("猫", encoded())
         event = Event(f"删除 {image_id} 999 {image_id}")

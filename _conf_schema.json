@@ -24,7 +24,7 @@
     "default": 120
   },
   "max_download_mb": {
-    "description": "单张图片最大下载体积（MB）",
+    "description": "单张图片最大下载及 Web 上传体积（MB）",
     "type": "int",
     "default": 20
   },
