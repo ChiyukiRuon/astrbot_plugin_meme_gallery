@@ -470,6 +470,14 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("999", text)
         self.assertEqual(self.plugin.store.entries("猫"), [])
 
+    async def test_delete_command_without_space(self):
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        event = Event(f"删除{image_id}")
+        await self.plugin.on_message(event)
+        text = event.bot.calls[-1][1]["message"][-1]["data"]["text"]
+        self.assertIn("已删除 1/1", text)
+        self.assertEqual(self.plugin.store.entries("猫"), [])
+
     async def test_rename_command_and_pending_upload(self):
         self.plugin.store.add_alias("猫", "小猫")
         await self.plugin.on_message(Event("上传小猫", sender="7", message_id="100"))

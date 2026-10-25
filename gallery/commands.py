@@ -57,7 +57,7 @@ def parse_command(text: str) -> Command | None:
             return Command("alias", gallery_name(args[0]), option=args[1],
                            aliases=tuple(dict.fromkeys(gallery_name(arg) for arg in args[2:])))
         raise ValueError("用法：图库别名 图库名 [添加/删除 别名1 别名2 ...]；含空格的名称请用双引号包围。")
-    if text == "删除" or text.startswith("删除 "):
+    if re.match(r"^删除(?=\d|\s|$)", text):
         rest = text[2:].strip()
         if not re.fullmatch(r"\d+(?:\s+\d+)*", rest):
             raise ValueError("用法：删除 图片ID1 图片ID2；ID 须为正整数。")

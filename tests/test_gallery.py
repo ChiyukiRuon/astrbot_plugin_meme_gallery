@@ -67,6 +67,18 @@ class CommandsTests(unittest.TestCase):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 parse_command(text)
 
+    def test_delete_without_space(self):
+        for text, ids in (("删除12", (12,)), ("删除 12", (12,)),
+                          ("删除12 34 12", (12, 34)), ("删除\t12", (12,))):
+            with self.subTest(text=text):
+                command = parse_command(text)
+                self.assertEqual((command.action, command.ids), ("delete", ids))
+        for text in ("删除0", "删除12abc", "删除12 -1", "删除99999999999999999999999"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_command(text)
+        self.assertIsNone(parse_command("删除记录"))
+        self.assertIsNone(parse_command("/删除12"))
+
     def test_multiple_aliases(self):
         for operation in ("添加", "删除"):
             with self.subTest(operation=operation):
