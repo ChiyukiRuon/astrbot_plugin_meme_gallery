@@ -1,7 +1,7 @@
 name: astrbot_plugin_meme_gallery
 display_name: 表情包图库
 desc: 支持图库上传、逐帧去重、随机取图、缩略图浏览与动静态图片处理。
-version: v0.4.0
+version: v0.4.1
 astrbot_version: ">=4.29.0,<5"
 author: 千雪琉音
 support_platforms:

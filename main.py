@@ -9,7 +9,7 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, StarTools
 
 from .gallery.commands import Command, parse_command
-from .gallery.imaging import contact_sheet, help_image, transform
+from .gallery.imaging import contact_sheets, help_image, transform
 from .gallery.onebot import collect_images, download_image, image_segment, segments, send
 from .gallery.storage import GalleryStore
 
@@ -93,7 +93,7 @@ class MemeGallery(Star):
         await send(event.bot, event, [
             image_segment(data, bool(self.config.get("send_as_meme", True)) and not preview)
             for data in images
-        ], forward=forward and not preview)
+        ], forward=forward and (not preview or len(images) > 1))
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
@@ -232,14 +232,14 @@ class MemeGallery(Star):
             if not items:
                 items = [(None, "空图库")]
             data = await asyncio.to_thread(
-                contact_sheet, items, title,
+                contact_sheets, items, title,
                 self.config.get("font_path", ""), aliases,
                 font_dir=self.config.get("font_dir", ""),
                 font_order=self.config.get("font_order", []),
                 counts=[row["count"] for row in rows] if command.action == "list" else None,
                 show_gif_badge=command.action == "sheet",
             )
-            await self.send_images(event, [data], preview=True)
+            await self.send_images(event, data, preview=True)
         elif command.action == "view":
             if command.ids:
                 rows = await asyncio.to_thread(self.store.by_ids, command.ids)

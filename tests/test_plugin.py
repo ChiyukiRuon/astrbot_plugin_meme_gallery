@@ -297,6 +297,37 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.on_message(event)
         self.assertEqual(event.bot.calls[-1][0], "send_group_forward_msg")
 
+    async def test_preview_pages_follow_send_configuration(self):
+        for command in ("看所有", "看所有猫"):
+            for mode, threshold, count, forwarded in (
+                ("direct", 5, 5, False), ("direct", 5, 6, True),
+                ("forward", 5, 2, True), ("forward", 0, 1, False),
+                ("direct", 1, 2, True),
+            ):
+                with self.subTest(command=command, mode=mode, threshold=threshold, count=count):
+                    self.plugin.config.update(multi_image_mode=mode, forward_threshold=threshold,
+                                              send_as_meme=True)
+                    pages = [encoded(picture(index)) for index in range(count)]
+                    with patch.object(plugin, "contact_sheets", return_value=pages):
+                        event = Event(command)
+                        await self.plugin.on_message(event)
+                    action, payload = event.bot.calls[-1]
+                    self.assertEqual(action, "send_group_forward_msg" if forwarded else "send_group_msg")
+                    images = ([node["data"]["content"][0] for node in payload["messages"]]
+                              if forwarded else payload["message"])
+                    self.assertEqual(images, [plugin.image_segment(page, False) for page in pages])
+
+    async def test_gallery_list_automatically_splits(self):
+        for index in range(5):
+            self.plugin.store.create(f"图库{index}")
+        self.plugin.config.update(multi_image_mode="forward", forward_threshold=5)
+        with patch.dict(plugin.contact_sheets.__globals__, MAX_PIXELS=260_000):
+            event = Event("看所有")
+            await self.plugin.on_message(event)
+        action, payload = event.bot.calls[-1]
+        self.assertEqual(action, "send_group_forward_msg")
+        self.assertEqual(len(payload["messages"]), 2)
+
     async def test_unrelated_message_passes_through(self):
         event = Event("你好")
         await self.plugin.on_message(event)
@@ -361,8 +392,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_font_settings_reach_help_and_preview(self):
         self.plugin.config.update({'font_dir': '/fonts', 'font_order': ['main.ttf', 'emoji.ttf']})
-        for command, renderer in (("图库帮助", "help_image"), ("看所有猫", "contact_sheet")):
-            with patch.object(plugin, renderer, return_value=encoded()) as render:
+        for command, renderer in (("图库帮助", "help_image"), ("看所有猫", "contact_sheets")):
+            result = encoded() if renderer == "help_image" else [encoded()]
+            with patch.object(plugin, renderer, return_value=result) as render:
                 await self.plugin.on_message(Event(command))
                 self.assertEqual(render.call_args.kwargs['font_dir'], '/fonts')
                 self.assertEqual(render.call_args.kwargs['font_order'], ['main.ttf', 'emoji.ttf'])
@@ -395,7 +427,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         await self.plugin.on_message(event)
         self.assertEqual(event.bot.calls[-1][1]["message"][0]["type"], "image")
         event = Event("看所有小猫")
-        with patch.object(plugin, "contact_sheet", return_value=encoded()) as render:
+        with patch.object(plugin, "contact_sheets", return_value=[encoded()]) as render:
             await self.plugin.on_message(event)
             self.assertEqual(render.call_args.args[1], "猫")
             self.assertEqual(render.call_args.args[3], ["小猫"])
@@ -421,11 +453,11 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_gallery_list_includes_counts(self):
         self.plugin.store.add("猫", encoded())
         self.plugin.store.create("空图库")
-        with patch.object(plugin, "contact_sheet", return_value=encoded()) as render:
+        with patch.object(plugin, "contact_sheets", return_value=[encoded()]) as render:
             await self.plugin.on_message(Event("看所有"))
             self.assertEqual(render.call_args.kwargs["counts"], [1, 0])
             self.assertFalse(render.call_args.kwargs["show_gif_badge"])
-        with patch.object(plugin, "contact_sheet", return_value=encoded()) as render:
+        with patch.object(plugin, "contact_sheets", return_value=[encoded()]) as render:
             await self.plugin.on_message(Event("看所有猫"))
             self.assertTrue(render.call_args.kwargs["show_gif_badge"])
 
@@ -452,7 +484,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("上传到猫咪", reply[-1]["data"]["text"])
         self.assertEqual(self.plugin.store.entries("猫"), [])
         self.assertEqual(len(self.plugin.store.entries("猫咪")), 1)
-        with patch.object(plugin, "contact_sheet", return_value=encoded()) as render:
+        with patch.object(plugin, "contact_sheets", return_value=[encoded()]) as render:
             await self.plugin.on_message(Event("看所有小猫"))
             self.assertEqual(render.call_args.args[1], "猫咪")
             self.assertEqual(render.call_args.args[3], ["小猫"])

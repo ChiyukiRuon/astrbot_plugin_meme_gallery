@@ -24,13 +24,13 @@
     "type": "string",
     "options": ["direct", "forward"],
     "default": "direct",
-    "hint": "direct 为一条消息发送，forward 为合并转发，每张图片一个节点。"
+    "hint": "direct 为一条消息发送，forward 为合并转发，每张图片一个节点；也适用于自动拆分后的多张图库预览。"
   },
   "forward_threshold": {
     "description": "强制合并转发的图片数量阈值",
     "type": "int",
     "default": 5,
-    "hint": "图片数量超过此值时强制合并转发。"
+    "hint": "图片数量超过此值时强制合并转发，也适用于多张图库预览；单张预览保持直发。"
   },
   "send_as_meme": {
     "description": "以表情包形式发送",

@@ -225,22 +225,47 @@ def _sheet_thumbnail(path: str, modified_ns: int, changed_ns: int, size: int,
     return thumb, animated
 
 
-def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: str = "",
-                  aliases: list[str] | None = None, *, font_dir: str = "", font_order=(),
-                  counts: list[int] | None = None, show_gif_badge: bool = True) -> bytes:
-    font = load_fonts(font_dir, 20, font_order, font_path)
-    small_font = load_fonts(font_dir, 16, font_order, font_path)
-    columns = min(5, max(1, len(items)))
-    rows = math.ceil(len(items) / columns)
-    width = columns * 200
+def _sheet_header(font, title: str, aliases: list[str] | None, width: int):
     header = [title]
     if aliases is not None:
         header.append("别名：" + ("、".join(aliases) if aliases else "暂无"))
     lines = []
     for text in header:
         lines.extend(font.wrap(text, width - 24))
-    header_height = max(60, len(lines) * 30 + 24)
-    # Keep the complete gallery in one image, while avoiding unbounded allocation.
+    return lines, max(60, len(lines) * 30 + 24)
+
+
+def contact_sheets(items: list[tuple[Path | None, str]], title: str, font_path: str = "",
+                   aliases: list[str] | None = None, *, font_dir: str = "", font_order=(),
+                   counts: list[int] | None = None, show_gif_badge: bool = True) -> list[bytes]:
+    font = load_fonts(font_dir, 20, font_order, font_path)
+    columns = min(5, max(1, len(items)))
+    _, header_height = _sheet_header(font, title, aliases, columns * 200)
+    page_rows = (MAX_PIXELS // (columns * 200) - header_height) // 200
+    if page_rows < 1:
+        raise ValueError("图库名称和别名过长，无法在单张预览中容纳完整标题及缩略图。")
+    page_size = page_rows * columns
+    return [
+        contact_sheet(
+            items[start:start + page_size], title, font_path, aliases,
+            font_dir=font_dir, font_order=font_order,
+            counts=counts[start:start + page_size] if counts is not None else None,
+            show_gif_badge=show_gif_badge, _columns=columns,
+        )
+        for start in range(0, max(1, len(items)), page_size)
+    ]
+
+
+def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: str = "",
+                  aliases: list[str] | None = None, *, font_dir: str = "", font_order=(),
+                  counts: list[int] | None = None, show_gif_badge: bool = True,
+                  _columns: int | None = None) -> bytes:
+    font = load_fonts(font_dir, 20, font_order, font_path)
+    small_font = load_fonts(font_dir, 16, font_order, font_path)
+    columns = _columns or min(5, max(1, len(items)))
+    rows = math.ceil(len(items) / columns)
+    width = columns * 200
+    lines, header_height = _sheet_header(font, title, aliases, width)
     if width * (rows * 200 + header_height) > MAX_PIXELS:
         raise ValueError("图库过大，缩略图超出单张图片尺寸上限，请按 ID 查看。")
     sheet = Image.new("RGB", (width, max(100, rows * 200 + header_height)), "#f5f5f5")

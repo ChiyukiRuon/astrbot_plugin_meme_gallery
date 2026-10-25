@@ -67,6 +67,11 @@ name is released, not converted into an alias; new names must be globally unused
 Alias commands accept quoted names containing whitespace.
 Contact-sheet headers wrap the canonical name and every alias without truncation,
 including for empty galleries.
+Oversized contact sheets split into ordered pages within the 16-million-pixel
+per-image budget. Every page repeats the complete header and uses the same column
+width, including the final partial page. Multi-page previews follow multi_image_mode
+and the strict forward_threshold comparison while retaining sub_type=0. Single-page
+previews and help images remain direct.
 Deletion deduplicates IDs and processes each separately, reporting partial failure.
 Files are renamed to `.deleting` before committing row deletion; failed database
 operations restore the original file. Startup restores staged files with surviving

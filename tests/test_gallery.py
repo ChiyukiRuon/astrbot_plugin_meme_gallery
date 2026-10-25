@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageOps
 
 from gallery.commands import parse_command
-from gallery.imaging import contact_sheet, decode, fingerprint, help_image, mirror, transform
+from gallery.imaging import contact_sheet, contact_sheets, decode, fingerprint, help_image, mirror, transform
 from gallery.onebot import collect_images, download_image, image_segment, segments, send
 from gallery.storage import GalleryStore
 
@@ -111,6 +111,33 @@ class CommandsTests(unittest.TestCase):
 
 
 class ImagingTests(unittest.TestCase):
+    def test_contact_sheet_pages_preserve_all_items_and_headers(self):
+        items = [(None, f"图库 {index}") for index in range(11)]
+        counts = list(range(11))
+        options = {"aliases": ["别名" * 80, "小猫"], "show_gif_badge": False}
+        first = contact_sheet(items[:5], "图库", counts=counts[:5], **options)
+        with Image.open(io.BytesIO(first)) as image:
+            limit = image.width * image.height
+        with patch("gallery.imaging.MAX_PIXELS", limit):
+            pages = contact_sheets(items, "图库", counts=counts, **options)
+            self.assertEqual(len(pages), 3)
+            for page, start in zip(pages, (0, 5, 10)):
+                self.assertEqual(page, contact_sheet(
+                    items[start:start + 5], "图库", counts=counts[start:start + 5],
+                    _columns=5, **options,
+                ))
+                with Image.open(io.BytesIO(page)) as image:
+                    self.assertLessEqual(image.width * image.height, limit)
+                    self.assertEqual(image.width, 1000)
+            self.assertEqual(contact_sheets(items[:5], "图库", counts=counts[:5], **options), [first])
+        with patch("gallery.imaging.MAX_PIXELS", 1000):
+            with self.assertRaisesRegex(ValueError, "标题"):
+                contact_sheets(items, "图库", **options)
+
+    def test_contact_sheet_single_page_and_empty(self):
+        for items in ([], [(None, "空图库")]):
+            self.assertEqual(contact_sheets(items, "图库"), [contact_sheet(items, "图库")])
+
     def test_thumbnail_jpeg_exif_directions(self):
         from gallery.imaging import _sheet_thumbnail
 
