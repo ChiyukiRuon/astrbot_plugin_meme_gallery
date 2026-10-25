@@ -1,6 +1,8 @@
 import hashlib
 import io
 import math
+import re
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -97,68 +99,130 @@ def transform(data: bytes, action: str, option: str = "") -> bytes:
 
 def help_image(font_path: str = "", wait_timeout: int = 120,
                forward_threshold: int = 5, multi_image_mode: str = "direct", *,
-               font_dir: str = "", font_order=()) -> bytes:
+               font_dir: str = "", font_order=(), admin_ids=(),
+               admin_gallery_permissions=(), admin_image_permissions=(),
+               command_prefix: str | None = None) -> bytes:
     font = load_fonts(font_dir, 24, font_order, font_path)
     heading = load_fonts(font_dir, 34, font_order, font_path)
-    sections = [
-        ("图库管理", [
-            "图库帮助  →  查看本帮助图片",
-            "创建猫猫 / 创建 猫猫  →  创建图库，之后才能上传",
-            "图库重命名 猫猫 猫咪  →  修改图库名，保留图片和别名",
-            "图库列表 / 看所有  →  查看全部图库和封面",
-            "上传猫猫 / 添加猫猫  →  上传图片到已创建的图库",
-            "图库别名 猫猫  →  显示该图库的全部别名",
-            "图库别名 猫猫 添加 小猫 猫咪 / 图库别名 猫猫 删除 小猫 猫咪",
-            "图库名和别名全局不能重复；别名可用于查看和上传。",
-            "多个别名用空格分隔，重复项合并，逐项反馈结果。",
-            "删除 12 34  →  删除指定图片及文件，保留图库",
-            "同一图库逐帧 pHash 去重；不同图库允许收录相同图片。",
-        ]),
-        ("查看图片", [
-            "看猫猫  →  随机取一张",
-            "看猫猫x3 / 看猫猫*3 / 看 猫猫 3  →  随机取多张",
-            "看12 34 / 看 12 34  →  按图片 ID 查看",
-            "看所有猫猫  →  查看图库缩略图及图片 ID",
-            "一次最多 20 张；随机不重复，数量不足时发送已有图片。",
-        ]),
-        ("图片处理 · 每次一张，支持静态图和动态图", [
-            "翻转 [水平/垂直] / flip [horizontal/vertical]  →  默认水平",
-            "镜像 [上/左/下/右] / mirror [top/left/bottom/right]  →  默认左",
-            "加速 2x / speed 0.5x  →  动画加速或慢放，倍数须大于 0",
-            "倒转 / reverse  →  倒转动画播放顺序",
-        ]),
-        ("如何提供图片", [
-            "支持命令附图、引用图片消息，或先发命令再发图片。",
-            f"后续发图限同一会话、同一发送者，等待 {wait_timeout} 秒。",
-            "上传还支持引用合并转发，仅读取第一层节点中的图片。",
-            "上传结果回复原指令，列出成功数量、图片 ID 和失败原因。",
-        ]),
-        ("提示", [
-            "WebUI 插件详情 → 图库管理：管理图库、图片，批量导入本地图片。",
-            "命令前缀跟随 AstrBot 设置；方括号为可选参数，无需输入。",
-            "也可按 AstrBot 的规则通过 @ 机器人或私聊触发命令。",
-            "图库名不能为纯数字，不能以 x数字、*数字或空格加数字结尾。",
-            f"多图发送：{'合并转发' if multi_image_mode == 'forward' else '一条消息'}；"
-            f"超过 {forward_threshold} 张强制合并转发。",
-            "发送方式、表情包模式、等待时间、字体文件夹和字体优先级可在插件配置调整。",
-        ]),
-    ]
-    width = max(1000, math.ceil(max(font.length(line)
-                                   for _, lines in sections for line in lines)) + 80)
-    height = 110 + sum(60 + len(lines) * 40 + 24 for _, lines in sections)
-    result = Image.new("RGB", (width, height), "#f5f5f5")
-    heading.draw(result, (40, 24), "表情包图库 · 使用帮助", fill="#222222")
-    y = 100
-    for title, lines in sections:
-        heading.draw(result, (40, y), title, fill="#3455a4")
-        y += 60
-        for line in lines:
-            font.draw(result, (40, y), line, fill="#222222")
+    subheading = load_fonts(font_dir, 28, font_order, font_path)
+    source = (Path(__file__).resolve().parent.parent / "docs" / "help.md").read_text(encoding="utf-8")
+    restricted = set()
+    if any(str(value).strip() for value in admin_ids):
+        restricted.update(admin_gallery_permissions)
+        restricted.update(admin_image_permissions)
+    blocks = []
+    rows = []
+    for line in source.splitlines():
+        text = line.strip()
+        if "/" in text and not text.startswith(("#", "-")):
+            cells = re.split(r"\s{2,}", text)
+            if text.startswith("/"):
+                cells.insert(0, "")
+            cells += [""] * (3 - len(cells))
+            label, command, description = cells
+            description = description.removesuffix("(管理员)")
+            permission = ""
+            if command.startswith("/创建"):
+                permission = "创建图库"
+            elif command.startswith("/图库重命名"):
+                permission = "重命名图库"
+            elif command.startswith("/图库删除"):
+                permission = "删除图库"
+            elif command.startswith("/图库别名"):
+                if "[添加]" in command:
+                    permission = "添加图库别名"
+                elif "[删除]" in command:
+                    permission = "删除图库别名"
+            elif command.startswith("/上传"):
+                permission = "上传图片"
+            elif command.startswith("/删除"):
+                permission = "删除图片"
+            if permission in restricted:
+                description += "(管理员)"
+            # 仅在图片中放大原有空格，保留紧凑命令写法及原始文案。
+            prefix = "/" if command_prefix is None else command_prefix
+            row = (label, prefix + command[1:].replace(" ", "   "), description)
+            rows.append(row)
+            blocks.append(("row", row))
+        elif text.startswith("## "):
+            blocks.append(("subheading", text[3:]))
+        elif text.startswith("# "):
+            blocks.append(("heading", text[2:]))
+        else:
+            blocks.append(("text" if text else "space", text))
+            if command_prefix is None and text == "|  连接多个可以使用的参数":
+                blocks.append(("text", "命令前缀请按实际情况使用，/仅做示意"))
+
+    # 全部命令共用列宽，按字体实际像素宽度定位，不依赖空格补齐。
+    widths = [math.ceil(max(font.length(row[i]) for row in rows)) for i in range(3)]
+    columns = (40, 40 + widths[0] + 32, 40 + widths[0] + widths[1] + 64)
+    width = max(1000, columns[2] + widths[2] + 40)
+    instructions = []
+    y = 32
+    for kind, value in blocks:
+        if kind == "space":
+            y += 16
+        elif kind == "row":
+            for x, cell in zip(columns, value):
+                if cell:
+                    instructions.append((font, (x, y), cell, "#222222"))
             y += 40
-        y += 24
+        elif kind in ("heading", "subheading"):
+            face = heading if kind == "heading" else subheading
+            color = "#244a86" if kind == "heading" else "#3675a6"
+            instructions.append((face, (40, y), value, color))
+            y += 54 if kind == "heading" else 46
+        else:
+            bullet = value.startswith("- ")
+            content = value[2:] if bullet else value
+            if bullet:
+                instructions.append((font, (40, y), "•", "#222222"))
+            x = 64 if bullet else 40
+            for line in font.wrap(content, width - x - 40):
+                instructions.append((font, (x, y), line, "#222222"))
+                y += 40
+    if width * (y + 32) > MAX_PIXELS:
+        raise ValueError("帮助图片超出尺寸上限。")
+    result = Image.new("RGB", (width, y + 32), "white")
+    for face, position, text, color in instructions:
+        face.draw(result, position, text, fill=color)
     output = io.BytesIO()
     result.save(output, format="PNG")
     return output.getvalue()
+
+
+@lru_cache(maxsize=512)
+def _sheet_thumbnail(path: str, modified_ns: int, changed_ns: int, size: int,
+                     show_gif_badge: bool) -> tuple[Image.Image, bool]:
+    # 缓存仅保存小图；文件元数据变化后重新生成，不保留原图或文件句柄。
+    with Image.open(path) as image:
+        if image.format == "JPEG":
+            # 在解码前缩小，允许 Pillow 使用 JPEG 解码器降采样。
+            # 旋转 90° 的 EXIF 方向需交换缩放边界，再校正方向。
+            rotated = image.getexif().get(274) in (5, 6, 7, 8)
+            image.thumbnail((150, 180) if rotated else (180, 150))
+            thumb = ImageOps.exif_transpose(image).convert("RGBA")
+        else:
+            thumb = ImageOps.exif_transpose(image)
+            if thumb.mode in ("RGB", "L", "P") and "transparency" not in thumb.info:
+                # 不透明图无需对全尺寸图像做 alpha 预乘和四通道缩放。
+                if thumb.mode == "P":
+                    thumb = thumb.convert("RGB")
+                thumb.thumbnail((180, 150))
+                thumb = thumb.convert("RGBA")
+            else:
+                thumb = thumb.convert("RGBA")
+                thumb.thumbnail((180, 150))
+        animated = False
+        if show_gif_badge:
+            # 只探测第二帧，避免为显示标记扫描整段 GIF。
+            try:
+                image.seek(1)
+            except EOFError:
+                pass
+            else:
+                animated = True
+    return thumb, animated
 
 
 def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: str = "",
@@ -189,15 +253,16 @@ def contact_sheet(items: list[tuple[Path | None, str]], title: str, font_path: s
             draw.rounded_rectangle((x + 10, y, x + 190, y + 150), radius=12, fill="#e5e7eb")
             font.draw(sheet, (x + 60, y + 60), "空图库", fill="#666666")
         else:
-            with Image.open(path) as image:
-                animated = show_gif_badge and getattr(image, "n_frames", 1) > 1
-                thumb = ImageOps.exif_transpose(image).convert("RGBA")
-                thumb.thumbnail((180, 150))
-                sheet.paste(thumb, (x + (200 - thumb.width) // 2, y), thumb)
-                if animated:
-                    draw.rounded_rectangle((x + 140, y + 6, x + 190, y + 32),
-                                           radius=6, fill="#262626")
-                    small_font.draw(sheet, (x + 150, y + 9), "GIF", fill="#ffffff")
+            path = path.resolve()
+            stat = path.stat()
+            thumb, animated = _sheet_thumbnail(
+                str(path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, show_gif_badge,
+            )
+            sheet.paste(thumb, (x + (200 - thumb.width) // 2, y), thumb)
+            if animated:
+                draw.rounded_rectangle((x + 140, y + 6, x + 190, y + 32),
+                                       radius=6, fill="#262626")
+                small_font.draw(sheet, (x + 150, y + 9), "GIF", fill="#ffffff")
         suffix = f"({counts[index]})" if counts is not None else ""
         label = font.ellipsize(label, max(0, int(184 - font.length(suffix)))) + suffix
         font.draw(sheet, (x + 8, y + 158), label, fill="#222222")

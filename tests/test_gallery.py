@@ -1,4 +1,5 @@
 import io
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -6,7 +7,7 @@ from contextlib import closing
 from unittest.mock import patch
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from gallery.commands import parse_command
 from gallery.imaging import contact_sheet, decode, fingerprint, help_image, mirror, transform
@@ -34,6 +35,14 @@ def animation():
 
 
 class CommandsTests(unittest.TestCase):
+    def test_delete_gallery_command(self):
+        for text, name in (("图库删除 猫", "猫"), ('图库删除 "猫 猫"', "猫 猫")):
+            command = parse_command(text)
+            self.assertEqual((command.action, command.target), ("delete_gallery", name))
+        for text in ("图库删除", "图库删除 猫 狗", '图库删除 "猫', "图库删除 123"):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                parse_command(text)
+
     def test_rename_command(self):
         for text in ("图库重命名 猫 狗", "图库重命名\t猫\t狗"):
             command = parse_command(text)
@@ -102,6 +111,98 @@ class CommandsTests(unittest.TestCase):
 
 
 class ImagingTests(unittest.TestCase):
+    def test_thumbnail_jpeg_exif_directions(self):
+        from gallery.imaging import _sheet_thumbnail
+
+        original = Image.new("RGB", (1200, 800), "red")
+        ImageDraw.Draw(original).rectangle((600, 0, 1199, 399), fill="blue")
+        ImageDraw.Draw(original).rectangle((0, 400, 599, 799), fill="green")
+        ImageDraw.Draw(original).rectangle((600, 400, 1199, 799), fill="yellow")
+        with tempfile.TemporaryDirectory() as root:
+            for orientation in range(1, 9):
+                with self.subTest(orientation=orientation):
+                    path = Path(root) / f"{orientation}.jpg"
+                    exif = Image.Exif()
+                    exif[274] = orientation
+                    original.save(path, exif=exif)
+                    before = path.read_bytes()
+                    with Image.open(path) as source:
+                        expected = ImageOps.exif_transpose(source).convert("RGBA")
+                        expected.thumbnail((180, 150))
+                    stat = path.stat()
+                    actual, animated = _sheet_thumbnail(
+                        str(path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, True,
+                    )
+                    self.assertFalse(animated)
+                    self.assertEqual(actual.size, expected.size)
+                    for x in (actual.width // 4, actual.width * 3 // 4):
+                        for y in (actual.height // 4, actual.height * 3 // 4):
+                            self.assertEqual(actual.getpixel((x, y)), expected.getpixel((x, y)))
+                    self.assertEqual(path.read_bytes(), before)
+
+    def test_thumbnail_transparency_and_small_images(self):
+        from gallery.imaging import _sheet_thumbnail
+
+        rgba = Image.new("RGBA", (800, 600), (255, 0, 0, 0))
+        ImageDraw.Draw(rgba).ellipse((100, 100, 500, 500), fill=(0, 0, 255, 128))
+        palette = Image.new("P", (800, 600), 0)
+        palette.putpalette([255, 0, 0, 0, 0, 255] + [0] * 762)
+        ImageDraw.Draw(palette).rectangle((100, 100, 500, 500), fill=1)
+        palette.info["transparency"] = 0
+        rgb = Image.new("RGB", (800, 600), "red")
+        rgb.info["transparency"] = (255, 0, 0)
+        with tempfile.TemporaryDirectory() as root:
+            for index, original in enumerate((rgba, palette, rgb, Image.new("L", (12, 8), 80))):
+                with self.subTest(mode=original.mode):
+                    path = Path(root) / f"{index}.png"
+                    original.save(path)
+                    with Image.open(path) as source:
+                        expected = ImageOps.exif_transpose(source).convert("RGBA")
+                        expected.thumbnail((180, 150))
+                    stat = path.stat()
+                    actual, animated = _sheet_thumbnail(
+                        str(path), stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, True,
+                    )
+                    self.assertFalse(animated)
+                    self.assertEqual(actual.size, expected.size)
+                    self.assertEqual(actual.tobytes(), expected.tobytes())
+
+    def test_sheet_reuses_thumbnails_and_refreshes_changed_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "image.png"
+            path.write_bytes(encoded(Image.new("RGBA", (32, 24), "red")))
+            items = [(path, "ID 1")]
+            with patch("gallery.imaging.Image.open", wraps=Image.open) as opened:
+                first = contact_sheet(items, "图库")
+                repeated = contact_sheet(items, "图库")
+                self.assertEqual(first, repeated)
+                self.assertEqual(opened.call_count, 1)
+                previous = path.stat()
+                path.write_bytes(encoded(Image.new("RGBA", (32, 24), "blue")))
+                os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns + 1_000_000_000))
+                changed = contact_sheet(items, "图库")
+                self.assertNotEqual(first, changed)
+                self.assertEqual(opened.call_count, 2)
+                path.unlink()
+                with self.assertRaises(FileNotFoundError):
+                    contact_sheet(items, "图库")
+
+    def test_sheet_animation_probe_preserves_first_frame(self):
+        from PIL import GifImagePlugin
+        from unittest.mock import PropertyMock
+
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "animation.gif"
+            Image.new("RGB", (32, 24), "red").save(
+                path, save_all=True, append_images=[Image.new("RGB", (32, 24), "blue")],
+                duration=100,
+            )
+            with patch.object(GifImagePlugin.GifImageFile, "n_frames",
+                              new_callable=PropertyMock, side_effect=AssertionError("不应统计总帧数")):
+                data = contact_sheet([(path, "ID 1")], "图库")
+            with Image.open(io.BytesIO(data)) as sheet:
+                self.assertEqual(sheet.getpixel((100, 65)), (255, 0, 0))
+
     def test_flip_pixels(self):
         frames, _, _ = decode(transform(encoded(), "flip", "horizontal"))
         self.assertEqual(frames[0].getpixel((31, 3)), (0, 0, 0, 255))
@@ -399,6 +500,82 @@ class StoreTests(unittest.TestCase):
             self.assertEqual([row["count"] for row in store.covers()], [2, 0])
             store.delete((first,))
             self.assertEqual([row["count"] for row in store.covers()], [1, 0])
+
+    def test_help_text_alignment_and_permission_markers(self):
+        from gallery.fonts import FontStack
+
+        source = (Path(__file__).resolve().parents[1] / "docs/help.md").read_text(encoding="utf-8")
+        recorded = []
+
+        def record(face, image, position, text, fill):
+            recorded.append((position, text))
+            self.assertLessEqual(position[0] + face.length(text), image.width - 39)
+            self.assertLessEqual(position[1] + face.size, image.height)
+
+        permissions = ["创建图库", "重命名图库", "删除图库", "添加图库别名", "删除图库别名"]
+        for admins, selected, expected in (([], permissions, 0), ([" "], permissions, 0),
+                                            (["9"], [], 0), (["9"], permissions, 9)):
+            recorded.clear()
+            with patch.object(FontStack, "draw", record):
+                help_image(admin_ids=admins, admin_gallery_permissions=selected,
+                           admin_image_permissions=["上传图片", "删除图片"] if selected else [])
+            texts = [text for _, text in recorded]
+            commands = [(position, text) for position, text in recorded if text.startswith("/")]
+            self.assertEqual(len(commands), 26)
+            self.assertEqual(len({position[0] for position, _ in commands}), 1)
+            for _, command in commands:
+                self.assertIn(command.replace("   ", " "), source)
+            self.assertEqual(sum(text.endswith("(管理员)") for text in texts), expected)
+            descriptions = [position[0] for position, text in recorded
+                            if text.startswith(("默认", "查看指定", "随机查看", "删除指定"))]
+            self.assertEqual(len(set(descriptions)), 1)
+            self.assertIn("[] 为必填参数", texts)
+            self.assertIn("<> 为可选参数", texts)
+            self.assertIn("提示", texts)
+            self.assertIn("显示该图库的所有别名", texts)
+
+    def test_help_prefix_rendering_and_fallback_note(self):
+        from gallery.fonts import FontStack
+
+        note = "命令前缀请按实际情况使用，/仅做示意"
+        for prefix in (None, "/", "!", "bot ", ""):
+            recorded = []
+            with patch.object(FontStack, "draw", lambda face, image, xy, text, fill:
+                              recorded.append((xy, text))):
+                help_image(command_prefix=prefix, admin_ids=["9"],
+                           admin_gallery_permissions=["删除图库"])
+            texts = [text for _, text in recorded]
+            display_prefix = "/" if prefix is None else prefix
+            self.assertIn(display_prefix + "图库帮助", texts)
+            self.assertIn(display_prefix + "图库删除   [图库名|图库别名]", texts)
+            self.assertIn("删除整个图库及其全部图片和别名(管理员)", texts)
+            if prefix is None:
+                index = texts.index("|  连接多个可以使用的参数")
+                self.assertEqual(texts[index + 1], note)
+                self.assertEqual(recorded[index + 1][0][1] - recorded[index][0][1], 40)
+                self.assertEqual(texts.count(note), 1)
+            else:
+                self.assertNotIn(note, texts)
+                if prefix != "/":
+                    self.assertFalse(any(text.startswith("/") for text in texts))
+
+    def test_help_gallery_deletion_permission_only(self):
+        from gallery.fonts import FontStack
+
+        for admins, selected, expected in ((["9"], ["删除图库"], 1),
+                                           ([], ["删除图库"], 0), (["9"], [], 0)):
+            recorded = []
+            with patch.object(FontStack, "draw", lambda face, image, xy, text, fill:
+                              recorded.append((xy, text))):
+                help_image(admin_ids=admins, admin_gallery_permissions=selected,
+                           admin_image_permissions=[])
+            marked = [(xy, text) for xy, text in recorded if text.endswith("(管理员)")]
+            self.assertEqual(len(marked), expected)
+            command_y = next(xy[1] for xy, text in recorded
+                             if text.replace("   ", " ") == "/图库删除 [图库名|图库别名]")
+            if expected:
+                self.assertEqual(marked[0][0][1], command_y)
+                self.assertEqual(marked[0][1], "删除整个图库及其全部图片和别名(管理员)")
 
     def test_help_and_empty_cover_images(self):
         for data in (help_image(), contact_sheet([(None, "空图库")], "图库列表")):

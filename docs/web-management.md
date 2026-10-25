@@ -2,7 +2,7 @@
 
 ## 进入页面
 
-本插件 v0.3.0 要求 **AstrBot >=4.29.0 且 <5.0.0**。已核对 4.29.0 发布标签提供 `views/`、`AstrBotPluginView` 和所需的 `astrbot.api.web` 接口；4.28.2 虽有后端 Web API，但没有本页面使用的 `AstrBotPluginView` 名称。独立浏览器验证使用的是 4.29.3 源码。升级 AstrBot 并重载本插件后，从 **WebUI → 插件 → 表情包图库详情 → 图库管理** 打开页面。
+本插件 v0.4.0 要求 **AstrBot >=4.29.0 且 <5.0.0**。已核对 4.29.0 发布标签提供 `views/`、`AstrBotPluginView` 和所需的 `astrbot.api.web` 接口；4.28.2 虽有后端 Web API，但没有本页面使用的 `AstrBotPluginView` 名称。独立浏览器验证使用的是 4.29.3 源码。升级 AstrBot 并重载本插件后，从 **WebUI → 插件 → 表情包图库详情 → 图库管理** 打开页面。
 
 管理页随插件发布，无需 Node.js、构建前端、额外端口或管理令牌。所有请求通过 AstrBot 提供的 bridge 和已认证的 Dashboard 插件扩展接口处理。界面跟随 Dashboard 的明暗主题。
 

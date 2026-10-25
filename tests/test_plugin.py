@@ -92,6 +92,90 @@ class Event:
 
 
 class PluginTests(unittest.IsolatedAsyncioTestCase):
+    async def test_selected_permissions_require_configured_admin(self):
+        cases = (
+            ("创建图库", "创建狗", "admin_gallery_permissions"),
+            ("重命名图库", "图库重命名 猫 狗", "admin_gallery_permissions"),
+            ("删除图库", "图库删除 猫", "admin_gallery_permissions"),
+            ("添加图库别名", "图库别名 猫 添加 小猫", "admin_gallery_permissions"),
+            ("删除图库别名", "图库别名 猫 删除 小猫", "admin_gallery_permissions"),
+            ("上传图片", "上传猫", "admin_image_permissions"),
+            ("上传图片", "添加猫", "admin_image_permissions"),
+            ("删除图片", "删除 1", "admin_image_permissions"),
+        )
+        for label, text, key in cases:
+            with self.subTest(permission=label, command=text):
+                self.plugin.config.clear()
+                self.plugin.config.update({"admin_ids": [" 9 "], key: [label]})
+                event = Event(text, [encoded()])
+                with patch.object(self.plugin, "execute", new_callable=AsyncMock) as execute, \
+                        patch.object(plugin, "collect_images", new_callable=AsyncMock) as collect:
+                    await self.plugin.on_message(event)
+                    execute.assert_not_awaited()
+                    collect.assert_not_awaited()
+                self.assertTrue(event.stopped)
+                self.assertIn(f"仅插件管理员可以执行“{label}”", event.bot.calls[-1][1]["message"][-1]["data"]["text"])
+                self.assertFalse(self.plugin.pending)
+                for sender in ("9", 9):
+                    with patch.object(self.plugin, "execute", new_callable=AsyncMock) as execute:
+                        await self.plugin.on_message(Event(text, [encoded()], sender=sender))
+                        execute.assert_awaited_once()
+
+    async def test_empty_admin_list_and_unselected_permissions_allow_everyone(self):
+        for admins, selected in (([], ["创建图库"]), (["", "  "], ["创建图库"]),
+                                 (["9"], []), ([2], ["创建图库"])):
+            with self.subTest(admins=admins, selected=selected):
+                self.plugin.config.update({"admin_ids": admins, "admin_gallery_permissions": selected})
+                with patch.object(self.plugin, "execute", new_callable=AsyncMock) as execute:
+                    await self.plugin.on_message(Event("创建狗"))
+                    execute.assert_awaited_once()
+
+    async def test_permission_does_not_restrict_queries_or_transformations(self):
+        self.plugin.config.update({
+            "admin_ids": ["9"],
+            "admin_gallery_permissions": ["创建图库", "重命名图库", "删除图库", "添加图库别名", "删除图库别名"],
+            "admin_image_permissions": ["上传图片", "删除图片"],
+        })
+        for text in ("图库帮助", "图库列表", "图库别名 猫", "看猫", "看所有猫", "翻转"):
+            with self.subTest(command=text), patch.object(self.plugin, "execute", new_callable=AsyncMock) as execute:
+                await self.plugin.on_message(Event(text, [encoded()]))
+                execute.assert_awaited_once()
+
+    async def test_pending_upload_rechecks_permission_before_collecting(self):
+        await self.plugin.on_message(Event("上传猫", message_id="100"))
+        self.plugin.config.update({"admin_ids": ["9"], "admin_image_permissions": ["上传图片"]})
+        event = Event(images=[encoded()], awakened=False)
+        with patch.object(plugin, "collect_images", new_callable=AsyncMock) as collect:
+            await self.plugin.on_message(event)
+            collect.assert_not_awaited()
+        self.assertFalse(self.plugin.pending)
+        self.assertEqual(self.plugin.store.entries("猫"), [])
+        reply = event.bot.calls[-1][1]["message"]
+        self.assertEqual(reply[0]["data"]["id"], "100")
+        self.assertIn("权限不足", reply[-1]["data"]["text"])
+
+    async def test_admin_pending_upload_and_execute_permission(self):
+        self.plugin.config.update({"admin_ids": ["2"], "admin_image_permissions": ["上传图片"]})
+        await self.plugin.on_message(Event("上传猫"))
+        await self.plugin.on_message(Event(images=[encoded()], awakened=False))
+        self.assertEqual(len(self.plugin.store.entries("猫")), 1)
+        self.plugin.config["admin_ids"] = ["9"]
+        with self.assertRaisesRegex(ValueError, "权限不足"):
+            await self.plugin.execute(Event(), plugin.Command("upload", "猫"), [], "10")
+
+    async def test_delete_gallery_by_alias(self):
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        path = self.plugin.store.path(self.plugin.store.by_ids((image_id,))[0])
+        self.plugin.store.add_alias("猫", "小猫")
+        self.plugin.config.update({"admin_ids": ["2"], "admin_gallery_permissions": ["删除图库"]})
+        event = Event("图库删除 小猫")
+        await self.plugin.on_message(event)
+        self.assertIn("已删除图库“猫”", event.bot.calls[-1][1]["message"][-1]["data"]["text"])
+        self.assertFalse(path.exists())
+        for name in ("猫", "小猫"):
+            with self.assertRaises(ValueError):
+                self.plugin.store.require_gallery(name)
+
     async def test_framework_prefix_and_wake_policy(self):
         for prefix in ("/", "!", "bot ", ""):
             with self.subTest(prefix=prefix):
@@ -246,6 +330,34 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(segment["type"], "image")
         self.assertEqual(segment["data"]["sub_type"], 0)
         self.assertTrue(event.stopped)
+
+    async def test_help_uses_session_prefix_and_handles_read_failure(self):
+        from unittest.mock import Mock
+
+        cases = [({"wake_prefix": ["!", "/"]}, "!"),
+                 ({"wake_prefix": ["bot "]}, "bot "),
+                 ({"wake_prefix": [""]}, ""), ({"wake_prefix": []}, ""),
+                 ({}, None), ({"wake_prefix": None}, None),
+                 ({"wake_prefix": [1]}, None), (RuntimeError("读取失败"), None)]
+        for config, expected in cases:
+            with self.subTest(config=config):
+                getter = Mock(side_effect=config) if isinstance(config, Exception) else Mock(return_value=config)
+                self.plugin.context = types.SimpleNamespace(get_config=getter)
+                event = Event("图库帮助")
+                with patch.object(plugin, "help_image", return_value=encoded()) as render:
+                    await self.plugin.on_message(event)
+                    self.assertEqual(render.call_args.kwargs["command_prefix"], expected)
+                getter.assert_called_once_with(umo=event.unified_msg_origin)
+
+    async def test_help_receives_permission_configuration(self):
+        settings = {"admin_ids": [" 9 "],
+                    "admin_gallery_permissions": ["创建图库", "删除图库别名"],
+                    "admin_image_permissions": ["删除图片"]}
+        self.plugin.config.update(settings)
+        with patch.object(plugin, "help_image", return_value=encoded()) as render:
+            await self.plugin.on_message(Event("图库帮助"))
+            for key, value in settings.items():
+                self.assertEqual(render.call_args.kwargs[key], value)
 
     async def test_font_settings_reach_help_and_preview(self):
         self.plugin.config.update({'font_dir': '/fonts', 'font_order': ['main.ttf', 'emoji.ttf']})

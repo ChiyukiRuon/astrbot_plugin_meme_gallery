@@ -1,4 +1,24 @@
 {
+  "admin_ids": {
+    "description": "插件管理员 QQ 号",
+    "type": "list",
+    "default": [],
+    "hint": "每项填写一个 QQ 号；留空时所有用户均可执行。名单非空时，选中的权限仅允许名单内用户执行，不自动包含群管理员或 AstrBot 管理员。"
+  },
+  "admin_gallery_permissions": {
+    "description": "管理员权限：图库权限",
+    "type": "list",
+    "options": ["创建图库", "重命名图库", "删除图库", "添加图库别名", "删除图库别名"],
+    "default": [],
+    "hint": "管理员名单非空时，选中的聊天命令仅限插件管理员使用；未选中则保持开放。管理员名单为空时所有用户均可执行。"
+  },
+  "admin_image_permissions": {
+    "description": "管理员权限：图片权限",
+    "type": "list",
+    "options": ["上传图片", "删除图片"],
+    "default": [],
+    "hint": "管理员名单非空时，选中的聊天命令仅限插件管理员使用；名单为空则全部开放。上传限制涵盖附图、引用及后续发图。Web 管理页仍使用 AstrBot 登录权限。"
+  },
   "multi_image_mode": {
     "description": "多张图片发送方式",
     "type": "string",

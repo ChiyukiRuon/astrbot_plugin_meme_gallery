@@ -30,6 +30,14 @@ def parse_command(text: str) -> Command | None:
     text = text.strip()
     if text == "图库帮助":
         return Command("help")
+    if re.match(r"^图库删除(?:\s|$)", text):
+        try:
+            args = shlex.split(text[len("图库删除"):].strip())
+        except ValueError:
+            raise ValueError("引号未闭合；用法：图库删除 图库名。") from None
+        if len(args) != 1:
+            raise ValueError("用法：图库删除 图库名；含空格的名称请用双引号包围。")
+        return Command("delete_gallery", gallery_name(args[0]))
     if re.match(r"^图库重命名(?:\s|$)", text):
         try:
             args = shlex.split(text[len("图库重命名"):].strip())

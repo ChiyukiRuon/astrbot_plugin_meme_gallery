@@ -56,6 +56,29 @@ class MemeGallery(Star):
             )
         return self.session
 
+    def check_permission(self, event, command: Command):
+        permissions = {
+            "create": ("admin_gallery_permissions", "创建图库"),
+            "rename": ("admin_gallery_permissions", "重命名图库"),
+            "delete_gallery": ("admin_gallery_permissions", "删除图库"),
+            "upload": ("admin_image_permissions", "上传图片"),
+            "delete": ("admin_image_permissions", "删除图片"),
+        }
+        permission = permissions.get(command.action)
+        if command.action == "alias" and command.option:
+            permission = ("admin_gallery_permissions", f"{command.option}图库别名")
+        if permission is None:
+            return
+        key, label = permission
+        if label not in self.config.get(key, []):
+            return
+        admins = {str(value).strip() for value in self.config.get("admin_ids", []) if str(value).strip()}
+        if not admins:
+            return
+        sender = str(event.get_sender_id()).strip()
+        if not sender or sender not in admins:
+            raise ValueError(f"权限不足：仅插件管理员可以执行“{label}”。")
+
     async def reply(self, event, text: str, message_id: str):
         chain = []
         if message_id:
@@ -93,6 +116,12 @@ class MemeGallery(Star):
                 pending = self.pending.get(key)
                 if not pending or not any(s.get("type") in ("image", "reply", "forward", "node") for s in chain):
                     return
+                try:
+                    self.check_permission(event, pending.command)
+                except ValueError:
+                    self.pending.pop(key, None)
+                    message_id = pending.message_id
+                    raise
                 images = await collect_images(event.bot, chain, pending.command.action == "upload")
                 if not images:
                     return
@@ -102,6 +131,7 @@ class MemeGallery(Star):
                 command, message_id = pending.command, pending.message_id
             else:
                 self.pending.pop(key, None)
+                self.check_permission(event, command)
                 images = []
                 if command.action == "upload":
                     gallery_id, canonical = await asyncio.to_thread(self.store.gallery_identity, command.target)
@@ -127,7 +157,15 @@ class MemeGallery(Star):
             await self.reply(event, "处理失败，请检查协议端连接、网络或后台日志。", message_id)
 
     async def execute(self, event, command: Command, images: list[dict], message_id: str):
+        self.check_permission(event, command)
         if command.action == "help":
+            try:
+                prefixes = self.context.get_config(umo=event.unified_msg_origin)["wake_prefix"]
+                if not isinstance(prefixes, list) or any(not isinstance(p, str) for p in prefixes):
+                    raise ValueError("命令前缀配置格式无效。")
+                command_prefix = prefixes[0] if prefixes else ""
+            except Exception:
+                command_prefix = None
             data = await asyncio.to_thread(
                 help_image, self.config.get("font_path", ""),
                 self.number_config("wait_timeout", 120),
@@ -135,6 +173,10 @@ class MemeGallery(Star):
                 self.config.get("multi_image_mode", "direct"),
                 font_dir=self.config.get("font_dir", ""),
                 font_order=self.config.get("font_order", []),
+                command_prefix=command_prefix,
+                admin_ids=self.config.get("admin_ids", []),
+                admin_gallery_permissions=self.config.get("admin_gallery_permissions", []),
+                admin_image_permissions=self.config.get("admin_image_permissions", []),
             )
             await self.send_images(event, [data], preview=True)
         elif command.action == "create":
@@ -144,6 +186,10 @@ class MemeGallery(Star):
         elif command.action == "rename":
             old_name = await asyncio.to_thread(self.store.rename, command.target, command.option)
             await self.reply(event, f"已将图库“{old_name}”重命名为“{command.option}”。", message_id)
+        elif command.action == "delete_gallery":
+            gallery_id, canonical = await asyncio.to_thread(self.store.gallery_identity, command.target)
+            await asyncio.to_thread(self.store.delete_gallery, gallery_id)
+            await self.reply(event, f"已删除图库“{canonical}”及其全部图片和别名。", message_id)
         elif command.action == "alias":
             canonical = await asyncio.to_thread(self.store.require_gallery, command.target)
             if command.option:

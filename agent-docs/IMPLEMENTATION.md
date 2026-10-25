@@ -9,7 +9,7 @@ Consult these official documents and the local AstrBot source before changing fr
 
 ## AstrBot compatibility
 
-Plugin v0.3.0 declares `astrbot_version: ">=4.29.0,<5"` using the official PEP 440 metadata field. The lower bound comes from the actual view contract: [v4.28.2 bridge](https://github.com/AstrBotDevs/AstrBot/blob/v4.28.2/astrbot/dashboard/plugin_page_bridge.js) lacks `AstrBotPluginView`, while [v4.29.0 bridge](https://github.com/AstrBotDevs/AstrBot/blob/v4.29.0/astrbot/dashboard/plugin_page_bridge.js) exposes it. The v4.29.0 view service supports `views/`, and its public Web API provides the request, response, upload read/close, and response-header interfaces used here. The next major version is excluded pending compatibility review.
+Plugin v0.4.0 declares `astrbot_version: ">=4.29.0,<5"` using the official PEP 440 metadata field. The lower bound comes from the actual view contract: [v4.28.2 bridge](https://github.com/AstrBotDevs/AstrBot/blob/v4.28.2/astrbot/dashboard/plugin_page_bridge.js) lacks `AstrBotPluginView`, while [v4.29.0 bridge](https://github.com/AstrBotDevs/AstrBot/blob/v4.29.0/astrbot/dashboard/plugin_page_bridge.js) exposes it. The v4.29.0 view service supports `views/`, and its public Web API provides the request, response, upload read/close, and response-header interfaces used here. The next major version is excluded pending compatibility review.
 
 This is a source-verified API compatibility floor, not a claim of full runtime testing on every supported release. Independent browser integration checks used official 4.29.3 source APIs and SDK; complete AstrBot startup/login remains unverified. The missing-Web-API fallback is defensive only and does not expand the declared support range.
 
@@ -52,8 +52,11 @@ All galleries are shared within the plugin instance.
 New galleries must be explicitly created with `创建图库名`; uploads never create them.
 The `galleries` table persists empty galleries. Startup idempotently migrates distinct
 gallery names from legacy image rows. Covers use a left join and empty placeholders.
-`图库帮助` renders usage as a PNG using the configured Chinese font and current
-wait/forward settings; it is sent as a normal image.
+`图库帮助` renders docs/help.md as a PNG using the configured font stack; it is sent as a normal image.
+Command rows share measured column widths. Administrator markers in the document
+are illustrative: rendered markers require a nonblank admin ID and the corresponding
+selected permission. The legacy wait/forward arguments remain accepted for compatibility
+but do not add text to the user-supplied help copy.
 `gallery_names` stores both canonical names and aliases under one primary key.
 Name resolution returns the canonical name before storing or querying images.
 Pending uploads capture the stable gallery ID when the command is received and
@@ -69,7 +72,14 @@ Files are renamed to `.deleting` before committing row deletion; failed database
 operations restore the original file. Startup restores staged files with surviving
 rows and removes staged files whose rows were deleted. Empty galleries and aliases
 survive deletion, and SQLite AUTOINCREMENT prevents reuse of deleted image IDs.
-No additional role restriction is imposed on deletion or alias management.
+Chat mutation permissions are selected independently through `admin_gallery_permissions`
+and `admin_image_permissions`. Restrictions apply only when `admin_ids` contains a
+nonblank sender ID and the operation is selected. An empty administrator list allows
+everyone. Group roles and AstrBot administrator roles do not implicitly grant access.
+Check before collecting images or creating pending requests, again on continuations,
+and at execution after acquiring the work lock. Alias queries remain unrestricted.
+`图库删除` resolves a stable gallery ID and reuses transactional `delete_gallery`.
+The authenticated Dashboard retains its own access boundary, without QQ ID checks.
 Duplicate animation detection compares every frame in order; timing is excluded.
 Requests waiting for images are isolated by platform instance, unified origin, and sender.
 Original upload message IDs are retained for replies after follow-up image messages.
