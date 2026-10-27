@@ -4,7 +4,7 @@
 
 ## 安装
 
-本插件 v0.4.2 支持 **AstrBot >=4.29.0 且 <5.0.0**，版本范围通过 `metadata.yaml` 的 `astrbot_version` 声明。Web 管理页面依赖该版本起提供的 `AstrBotPluginView` bridge；已使用 4.29.3 源码中的官方 API 和 bridge 完成独立浏览器验证，尚未完成完整 AstrBot 登录联调。
+本插件 v0.5.0 支持 **AstrBot >=4.29.0 且 <5.0.0**，版本范围通过 `metadata.yaml` 的 `astrbot_version` 声明。Web 管理页面依赖该版本起提供的 `AstrBotPluginView` bridge；已使用 4.29.3 源码中的官方 API 和 bridge 完成独立浏览器验证，尚未完成完整 AstrBot 登录联调。
 
 将本插件放到 AstrBot 的 `data/plugins/` 下，在 WebUI 中重启AstrBot以重载插件。
 
