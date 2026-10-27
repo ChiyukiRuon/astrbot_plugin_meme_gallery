@@ -93,6 +93,7 @@ class Event:
 
 class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def test_selected_permissions_require_configured_admin(self):
+        self.plugin.store.add("猫", encoded())
         cases = (
             ("创建图库", "创建狗", "admin_gallery_permissions"),
             ("重命名图库", "图库重命名 猫 狗", "admin_gallery_permissions"),
@@ -119,6 +120,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
                 for sender in ("9", 9):
                     with patch.object(self.plugin, "execute", new_callable=AsyncMock) as execute:
                         await self.plugin.on_message(Event(text, [encoded()], sender=sender))
+                        if text.startswith(("删除", "图库删除")) or " 删除 " in text:
+                            execute.assert_not_awaited()
+                            await self.plugin.on_message(Event("YES", sender=sender, awakened=False))
                         execute.assert_awaited_once()
 
     async def test_empty_admin_list_and_unselected_permissions_allow_everyone(self):
@@ -169,6 +173,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.store.add_alias("猫", "小猫")
         self.plugin.config.update({"admin_ids": ["2"], "admin_gallery_permissions": ["删除图库"]})
         event = Event("图库删除 小猫")
+        await self.plugin.on_message(event)
+        self.assertTrue(path.exists())
+        event = Event("YES", awakened=False)
         await self.plugin.on_message(event)
         self.assertIn("已删除图库“猫”", event.bot.calls[-1][1]["message"][-1]["data"]["text"])
         self.assertFalse(path.exists())
@@ -432,6 +439,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(render.call_args.args[1], "猫")
             self.assertEqual(render.call_args.args[3], ["小猫"])
         await self.plugin.on_message(Event("图库别名 猫 删除 小猫"))
+        await self.plugin.on_message(Event("YES", awakened=False))
         self.assertEqual(self.plugin.store.aliases("猫"), [])
 
     async def test_multiple_aliases_and_partial_failures(self):
@@ -442,6 +450,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(text.count("添加别名"), 3)
         self.assertIn("占用", text)
         event = Event("图库别名 小猫 删除 小猫 不存在 猫 猫咪 喵喵 小猫")
+        await self.plugin.on_message(event)
+        event = Event("YES", awakened=False)
         await self.plugin.on_message(event)
         self.assertEqual(self.plugin.store.aliases("猫"), [])
         self.assertEqual(self.plugin.store.require_gallery("猫"), "猫")
@@ -465,6 +475,8 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         image_id, _ = self.plugin.store.add("猫", encoded())
         event = Event(f"删除 {image_id} 999 {image_id}")
         await self.plugin.on_message(event)
+        event = Event("YES", awakened=False)
+        await self.plugin.on_message(event)
         text = event.bot.calls[-1][1]["message"][-1]["data"]["text"]
         self.assertIn("已删除 1/2", text)
         self.assertIn("999", text)
@@ -474,9 +486,150 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         image_id, _ = self.plugin.store.add("猫", encoded())
         event = Event(f"删除{image_id}")
         await self.plugin.on_message(event)
+        event = Event("YES", awakened=False)
+        await self.plugin.on_message(event)
         text = event.bot.calls[-1][1]["message"][-1]["data"]["text"]
         self.assertIn("已删除 1/1", text)
         self.assertEqual(self.plugin.store.entries("猫"), [])
+
+    async def test_deletion_requires_exact_raw_yes_and_previews_original(self):
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        event = Event(f"删除 {image_id}", message_id="100")
+        await self.plugin.on_message(event)
+        chain = event.bot.calls[-1][1]["message"]
+        self.assertEqual(chain[0]["data"]["id"], "100")
+        self.assertIn("即将从[猫]删除", chain[1]["data"]["text"])
+        self.assertEqual(chain[2], plugin.image_segment(encoded(), False))
+        for text in ("", "yes", "Yes", "YE", "YESS", "YES!", " YES", "YES ", "YES\n", "/YES"):
+            await self.plugin.on_message(Event(text, normalized="YES", awakened=False))
+            self.assertEqual(len(self.plugin.store.entries("猫")), 1)
+        await self.plugin.on_message(Event("YES", images=[encoded()], awakened=False))
+        self.assertEqual(len(self.plugin.store.entries("猫")), 1)
+        first, second = Event("YES", awakened=False), Event("YES", awakened=False)
+        await asyncio.gather(self.plugin.on_message(first), self.plugin.on_message(second))
+        self.assertEqual(len(first.bot.calls) + len(second.bot.calls), 1)
+        self.assertEqual(first.bot.calls[-1][1]["message"][0]["data"]["id"], "100")
+        self.assertEqual(self.plugin.store.entries("猫"), [])
+
+    async def test_deletion_confirmation_isolation_expiry_and_replacement(self):
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        await self.plugin.on_message(Event(f"删除 {image_id}"))
+        for event in (Event("YES", sender="9"), Event("YES", group="9")):
+            await self.plugin.on_message(event)
+            self.assertFalse(event.bot.calls)
+        event = Event("YES")
+        event.get_platform_id = lambda: "other"
+        await self.plugin.on_message(event)
+        self.assertFalse(event.bot.calls)
+        next(iter(self.plugin.pending.values())).expires = time.monotonic() - 1
+        await self.plugin.on_message(Event("YES"))
+        self.assertFalse(self.plugin.pending)
+        await self.plugin.on_message(Event(f"删除 {image_id}"))
+        await self.plugin.on_message(Event("图库别名 猫"))
+        await self.plugin.on_message(Event("YES"))
+        self.assertEqual(len(self.plugin.store.entries("猫")), 1)
+
+    async def test_deletion_confirmation_rechecks_permission(self):
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        await self.plugin.on_message(Event(f"删除 {image_id}"))
+        self.plugin.config.update(admin_ids=["9"], admin_image_permissions=["删除图片"])
+        event = Event("YES")
+        await self.plugin.on_message(event)
+        self.assertIn("权限不足", event.bot.calls[-1][1]["message"][-1]["data"]["text"])
+        self.assertFalse(self.plugin.pending)
+        self.assertEqual(len(self.plugin.store.entries("猫")), 1)
+
+    async def test_delete_confirmation_timeout_configuration(self):
+        for value, expected in ((None, 30), (7, 7), (0, 1), ("invalid", 30)):
+            with self.subTest(value=value):
+                self.plugin.config.clear()
+                self.plugin.config["wait_timeout"] = 600
+                if value is not None:
+                    self.plugin.config["delete_confirm_timeout"] = value
+                event = Event("图库删除 猫")
+                with patch.object(plugin, "time", types.SimpleNamespace(monotonic=lambda: 1000)):
+                    await self.plugin.on_message(event)
+                    pending = next(iter(self.plugin.pending.values()))
+                    self.assertEqual(pending.expires, 1000 + expected)
+                self.assertIn(f"{expected} 秒内", event.bot.calls[-1][1]["message"][-1]["data"]["text"])
+                with patch.object(plugin, "time", types.SimpleNamespace(monotonic=lambda: 1000 + expected)):
+                    await self.plugin.on_message(Event("YES"))
+                self.assertFalse(self.plugin.pending)
+                self.assertEqual(self.plugin.store.require_gallery("猫"), "猫")
+
+    async def test_disabled_confirmation_deletes_immediately_with_permissions(self):
+        self.plugin.config["delete_confirmation"] = False
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        self.plugin.store.add_alias("猫", "小猫")
+        for command, permission, label in (
+            (f"删除 {image_id}", "admin_image_permissions", "删除图片"),
+            ("图库别名 猫 删除 小猫", "admin_gallery_permissions", "删除图库别名"),
+            ("图库删除 猫", "admin_gallery_permissions", "删除图库"),
+        ):
+            with self.subTest(command=command):
+                self.plugin.config.update(admin_ids=["9"])
+                self.plugin.config[permission] = [label]
+                event = Event(command)
+                await self.plugin.on_message(event)
+                self.assertIn("权限不足", event.bot.calls[-1][1]["message"][-1]["data"]["text"])
+                event = Event(command, sender="9")
+                await self.plugin.on_message(event)
+                self.assertIn("删除", event.bot.calls[-1][1]["message"][-1]["data"]["text"])
+                self.assertFalse(self.plugin.pending)
+                if label == "删除图片":
+                    self.assertEqual(self.plugin.store.entries("猫"), [])
+                elif label == "删除图库别名":
+                    self.assertEqual(self.plugin.store.aliases("猫"), [])
+                else:
+                    with self.assertRaises(ValueError):
+                        self.plugin.store.require_gallery("猫")
+
+    async def test_new_command_supersedes_confirmation_being_sent(self):
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        entered, release = asyncio.Event(), asyncio.Event()
+        original = plugin.send
+
+        async def delayed_send(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            await original(*args, **kwargs)
+
+        with patch.object(plugin, "send", side_effect=delayed_send):
+            deletion = asyncio.create_task(self.plugin.on_message(Event(f"删除 {image_id}")))
+            await entered.wait()
+            replacement = asyncio.create_task(self.plugin.on_message(Event("图库别名 猫")))
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.gather(deletion, replacement)
+        await self.plugin.on_message(Event("YES"))
+        self.assertFalse(self.plugin.pending)
+        self.assertEqual(len(self.plugin.store.entries("猫")), 1)
+
+    async def test_failed_confirmation_send_does_not_authorize_deletion(self):
+        image_id, _ = self.plugin.store.add("猫", encoded())
+        with patch.object(plugin, "send", side_effect=ValueError("发送失败")):
+            with self.assertRaisesRegex(ValueError, "发送失败"):
+                await self.plugin.on_message(Event(f"删除 {image_id}"))
+        await self.plugin.on_message(Event("YES"))
+        self.assertFalse(self.plugin.pending)
+        self.assertEqual(len(self.plugin.store.entries("猫")), 1)
+
+    async def test_pending_deletion_keeps_gallery_identity(self):
+        for text in ("图库别名 猫 删除 小猫", "图库删除 猫"):
+            with self.subTest(command=text):
+                self.plugin.store.add_alias("猫", "小猫")
+                await self.plugin.on_message(Event(text))
+                self.plugin.store.rename("猫", "旧图库")
+                self.plugin.store.create("猫")
+                await self.plugin.on_message(Event("YES"))
+                self.assertEqual(self.plugin.store.require_gallery("猫"), "猫")
+                if text.startswith("图库别名"):
+                    self.assertEqual(self.plugin.store.aliases("旧图库"), [])
+                    gallery_id, _ = self.plugin.store.gallery_identity("旧图库")
+                    self.plugin.store.delete_gallery(gallery_id)
+                else:
+                    with self.assertRaises(ValueError):
+                        self.plugin.store.require_gallery("旧图库")
 
     async def test_rename_command_and_pending_upload(self):
         self.plugin.store.add_alias("猫", "小猫")

@@ -19,6 +19,8 @@ class Pending:
     command: Command
     message_id: str
     expires: float
+    confirmation: bool = False
+    ready: bool = True
 
 
 class MemeGallery(Star):
@@ -105,6 +107,7 @@ class MemeGallery(Star):
         key = (str(event.get_platform_id()), str(event.unified_msg_origin), str(event.get_sender_id()))
         now = time.monotonic()
         self.pending = {k: v for k, v in self.pending.items() if v.expires > now}
+        confirmation = None
         try:
             # Match AstrBot's CommandFilter gate and consume its normalized text.
             # is_wake alone is insufficient: ALL-message listeners set it themselves.
@@ -114,7 +117,21 @@ class MemeGallery(Star):
             )
             if command is None:
                 pending = self.pending.get(key)
-                if not pending or not any(s.get("type") in ("image", "reply", "forward", "node") for s in chain):
+                if not pending:
+                    return
+                if pending.confirmation:
+                    if (not pending.ready
+                            or any(s.get("type") not in ("text", "reply") for s in chain)
+                            or "".join(s["data"].get("text", "") for s in chain
+                                       if s.get("type") == "text") != "YES"):
+                        return
+                    self.pending.pop(key, None)
+                    command, message_id = pending.command, pending.message_id
+                    event.stop_event()
+                    async with self.work_lock:
+                        await self.execute(event, command, [], message_id)
+                    return
+                if not any(s.get("type") in ("image", "reply", "forward", "node") for s in chain):
                     return
                 try:
                     self.check_permission(event, pending.command)
@@ -132,6 +149,13 @@ class MemeGallery(Star):
             else:
                 self.pending.pop(key, None)
                 self.check_permission(event, command)
+                if self.config.get("delete_confirmation", True) and (
+                    command.action in ("delete", "delete_gallery") or (
+                        command.action == "alias" and command.option == "删除"
+                    )
+                ):
+                    confirmation = Pending(command, message_id, float("inf"), True, False)
+                    self.pending[key] = confirmation
                 images = []
                 if command.action == "upload":
                     gallery_id, canonical = await asyncio.to_thread(self.store.gallery_identity, command.target)
@@ -147,17 +171,67 @@ class MemeGallery(Star):
             event.stop_event()
             # Bound decoding/rendering memory across concurrent commands.
             async with self.work_lock:
-                await self.execute(event, command, images, message_id)
+                if confirmation is not None:
+                    if self.pending.get(key) is not confirmation:
+                        return
+                    self.check_permission(event, command)
+                    command = await self.confirm_deletion(event, command, message_id)
+                    if self.pending.get(key) is confirmation:
+                        confirmation.command = command
+                        confirmation.expires = time.monotonic() + self.number_config("delete_confirm_timeout", 30)
+                        confirmation.ready = True
+                else:
+                    await self.execute(event, command, images, message_id)
         except ValueError as exc:
+            if confirmation is not None and self.pending.get(key) is confirmation:
+                self.pending.pop(key, None)
             event.stop_event()
             await self.reply(event, str(exc), message_id)
         except Exception:
+            if confirmation is not None and self.pending.get(key) is confirmation:
+                self.pending.pop(key, None)
             logger.exception("表情包图库处理失败")
             event.stop_event()
             await self.reply(event, "处理失败，请检查协议端连接、网络或后台日志。", message_id)
 
+    async def confirm_deletion(self, event, command: Command, message_id: str) -> Command:
+        timeout = self.number_config("delete_confirm_timeout", 30)
+        prompt = f"确认是否继续，确认回复YES（{timeout} 秒内，仅接受完整大写 YES）。"
+        if command.action == "delete":
+            found = False
+            for image_id in command.ids:
+                try:
+                    rows = await asyncio.to_thread(self.store.by_ids, (image_id,))
+                except ValueError as exc:
+                    await self.reply(event, str(exc), message_id)
+                    continue
+                row = rows[0]
+                found = True
+                data = await asyncio.to_thread(self.store.path(row).read_bytes)
+                chain = [{"type": "reply", "data": {"id": message_id}}] if message_id else []
+                chain.extend([
+                    {"type": "text", "data": {"text": f"即将从[{row['gallery']}]删除：ID {image_id}\n"}},
+                    image_segment(data, False),
+                    {"type": "text", "data": {"text": "\n" + prompt}},
+                ])
+                await send(event.bot, event, chain)
+            if not found:
+                raise ValueError("没有可删除的图片。")
+        else:
+            gallery_id, canonical = await asyncio.to_thread(self.store.gallery_identity, command.target)
+            command = replace(command, target=canonical, gallery_id=gallery_id)
+            if command.action == "delete_gallery":
+                text = f"即将删除图库[{canonical}]及其全部图片和别名。"
+            else:
+                text = f"即将从[{canonical}]删除别名：" + "、".join(command.aliases) + "。"
+            await self.reply(event, text + "\n" + prompt, message_id)
+        return command
+
     async def execute(self, event, command: Command, images: list[dict], message_id: str):
         self.check_permission(event, command)
+        if command.gallery_id is not None and command.action in ("delete_gallery", "alias"):
+            canonical = await asyncio.to_thread(self.store.name_by_id, command.gallery_id)
+            command = replace(command, target=canonical)
         if command.action == "help":
             try:
                 prefixes = self.context.get_config(umo=event.unified_msg_origin)["wake_prefix"]

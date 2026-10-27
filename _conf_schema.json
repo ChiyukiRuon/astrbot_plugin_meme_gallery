@@ -43,6 +43,18 @@
     "type": "int",
     "default": 120
   },
+  "delete_confirmation": {
+    "description": "删除操作二次确认",
+    "type": "bool",
+    "default": true,
+    "hint": "适用于聊天中的删除图片、删除图库和删除别名指令；关闭后立即执行删除，仍检查操作权限。"
+  },
+  "delete_confirm_timeout": {
+    "description": "等待删除确认的秒数",
+    "type": "int",
+    "default": 30,
+    "hint": "开启二次确认时生效，最少 1 秒；超时未回复完整大写 YES 则不删除。"
+  },
   "max_download_mb": {
     "description": "单张图片最大下载及 Web 上传体积（MB）",
     "type": "int",

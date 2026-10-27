@@ -73,6 +73,17 @@ width, including the final partial page. Multi-page previews follow multi_image_
 and the strict forward_threshold comparison while retaining sub_type=0. Single-page
 previews and help images remain direct.
 Deletion deduplicates IDs and processes each separately, reporting partial failure.
+By default, all chat deletions (images, galleries, aliases) first send a quoted confirmation.
+delete_confirmation defaults to true; disabling it executes deletions immediately
+with the existing permission checks. delete_confirm_timeout defaults to 30 seconds
+(minimum 1), independently of the 120-second image wait_timeout.
+Image confirmations include the stored image, its ID, and canonical gallery name.
+Confirmation accepts exactly raw text YES, case-sensitive, without whitespace or
+non-text attachments (reply metadata is allowed). It shares pending-request isolation,
+replacement and expiry rules; invalid replies leave the request pending.
+Requests become ready only after successful prompt delivery, are claimed once, and
+recheck permissions under the work lock. Gallery/alias requests retain stable IDs.
+The generated help reads the confirmation instructions from docs/help.md.
 Files are renamed to `.deleting` before committing row deletion; failed database
 operations restore the original file. Startup restores staged files with surviving
 rows and removes staged files whose rows were deleted. Empty galleries and aliases
