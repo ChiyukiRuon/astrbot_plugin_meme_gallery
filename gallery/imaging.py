@@ -65,6 +65,37 @@ def mirror(frame: Image.Image, direction: str) -> Image.Image:
     return result
 
 
+def resample_animation(
+    frames: list[Image.Image], durations: list[int], factor: float,
+) -> tuple[list[Image.Image], list[int]]:
+    """按累计时间量化到 GIF 的 10 毫秒刻度，丢弃没有输出时长的帧。"""
+    if not math.isfinite(factor) or factor <= 0:
+        raise ValueError("加速倍数须为大于 0 的有限数字。")
+    if len(frames) < 2:
+        raise ValueError("加速需要动态图。")
+    if len(frames) != len(durations) or any(d <= 0 for d in durations):
+        raise ValueError("动画帧与时长不匹配，或帧时长无效。")
+    if any(not math.isfinite(d / factor) or d / factor > 655350 for d in durations):
+        raise ValueError("倍率过小，单帧时长超过 GIF 支持范围。")
+
+    # 使用整数比例计算累计边界，避免浮点累加误差；半刻度向上取整。
+    numerator, denominator = factor.as_integer_ratio()
+    tick_divisor = numerator * 10
+    elapsed = 0
+    previous_tick = 0
+    output_frames, output_durations = [], []
+    for frame, duration in zip(frames, durations):
+        elapsed += duration
+        end_tick = (2 * elapsed * denominator + tick_divisor) // (2 * tick_divisor)
+        if end_tick > previous_tick:
+            output_frames.append(frame)
+            output_durations.append((end_tick - previous_tick) * 10)
+            previous_tick = end_tick
+    if len(output_frames) < 2:
+        raise ValueError("倍率过大，GIF 的 10 毫秒精度无法保留至少两帧动画，请降低倍率。")
+    return output_frames, output_durations
+
+
 def transform(data: bytes, action: str, option: str = "") -> bytes:
     frames, durations, loop = decode(data)
     if action == "flip":
@@ -78,13 +109,11 @@ def transform(data: bytes, action: str, option: str = "") -> bytes:
         frames.reverse()
         durations.reverse()
     elif action == "speed":
-        if len(frames) < 2:
-            raise ValueError("加速需要动态图。")
-        factor = float(option)
-        adjusted = [duration / factor for duration in durations]
-        if any(not math.isfinite(d) or d > 655350 for d in adjusted):
-            raise ValueError("倍率过小，单帧时长超过 GIF 支持范围。")
-        durations = [max(10, round(d / 10) * 10) for d in adjusted]
+        try:
+            factor = float(option)
+        except ValueError:
+            raise ValueError("加速倍数须为大于 0 的有限数字。") from None
+        frames, durations = resample_animation(frames, durations, factor)
     else:
         raise ValueError("未知的图片处理操作。")
     output = io.BytesIO()
