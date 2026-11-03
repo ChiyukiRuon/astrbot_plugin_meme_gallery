@@ -68,7 +68,7 @@ def mirror(frame: Image.Image, direction: str) -> Image.Image:
 def resample_animation(
     frames: list[Image.Image], durations: list[int], factor: float,
 ) -> tuple[list[Image.Image], list[int]]:
-    """按累计时间量化到 GIF 的 10 毫秒刻度，丢弃没有输出时长的帧。"""
+    """按 10 毫秒刻度量化累计时间，丢帧以保证输出每帧至少 20 毫秒。"""
     if not math.isfinite(factor) or factor <= 0:
         raise ValueError("加速倍数须为大于 0 的有限数字。")
     if len(frames) < 2:
@@ -87,12 +87,17 @@ def resample_animation(
     for frame, duration in zip(frames, durations):
         elapsed += duration
         end_tick = (2 * elapsed * denominator + tick_divisor) // (2 * tick_divisor)
-        if end_tick > previous_tick:
+        # 10 毫秒帧可能被播放器按 100 毫秒播放，累计到至少两刻度再输出。
+        if end_tick - previous_tick >= 2:
             output_frames.append(frame)
             output_durations.append((end_tick - previous_tick) * 10)
             previous_tick = end_tick
     if len(output_frames) < 2:
-        raise ValueError("倍率过大，GIF 的 10 毫秒精度无法保留至少两帧动画，请降低倍率。")
+        raise ValueError("倍率过大，最短 20 毫秒帧时长无法保留至少两帧动画，请降低倍率。")
+    # 末尾不足 20 毫秒的余量并入上一帧，保持总时长且不生成短帧。
+    output_durations[-1] += (end_tick - previous_tick) * 10
+    if any(d > 655350 for d in output_durations):
+        raise ValueError("倍率过小，单帧时长超过 GIF 支持范围。")
     return output_frames, output_durations
 
 

@@ -279,14 +279,15 @@ class ImagingTests(unittest.TestCase):
     def test_speed_cumulative_timing_and_frame_selection(self):
         frames = [Image.new("RGB", (2, 2), (i, 0, 0)) for i in range(100)]
         result, durations = resample_animation(frames, [40] * 100, 2.5)
-        self.assertEqual(result, frames)
+        self.assertEqual(len(result), 60)
         self.assertEqual(sum(durations), 1600)
-        self.assertEqual(set(durations), {10, 20})
-        for i in range(1, 101):
-            self.assertLessEqual(abs(sum(durations[:i]) - i * 16), 5)
+        self.assertEqual(set(durations), {20, 30})
+        for i, frame in enumerate(result):
+            source_index = frame.getpixel((0, 0))[0]
+            self.assertLessEqual(abs(sum(durations[:i + 1]) - (source_index + 1) * 16), 5)
         result, durations = resample_animation(frames, [40] * 100, 8.0)
-        self.assertEqual(result, frames[::2])
-        self.assertEqual(durations, [10] * 50)
+        self.assertEqual(result, frames[2::4])
+        self.assertEqual(durations, [20] * 25)
 
     def test_speed_irregular_timing_and_slowdown(self):
         frames = [picture(i) for i in range(5)]
@@ -294,9 +295,27 @@ class ImagingTests(unittest.TestCase):
         self.assertEqual(result, [frames[1], frames[4]])
         self.assertEqual(durations, [30, 20])
         result, durations = resample_animation(frames, [10, 90, 20, 10, 70], 0.8)
-        self.assertEqual(result, frames)
+        self.assertEqual(result, [frames[1], frames[2], frames[4]])
         self.assertEqual(sum(durations), 250)
-        self.assertTrue(all(d >= 10 and d % 10 == 0 for d in durations))
+        self.assertTrue(all(d >= 20 and d % 10 == 0 for d in durations))
+
+    def test_speed_short_tail_preserves_total_time(self):
+        frames = [picture(i) for i in range(3)]
+        result, durations = resample_animation(frames, [40, 40, 20], 2.0)
+        self.assertEqual(result, frames[:2])
+        self.assertEqual(durations, [20, 30])
+        with self.assertRaisesRegex(ValueError, "倍率过小"):
+            resample_animation(frames, [20, 655350, 10], 1.0)
+
+    def test_speed_sample_timing_avoids_player_clamping(self):
+        frames = [Image.new("RGB", (2, 2), (i * 3, 0, 0)) for i in range(62)]
+        source = io.BytesIO()
+        frames[0].save(source, format="GIF", save_all=True,
+                       append_images=frames[1:], duration=[40] * 52 + [50] * 10)
+        _, durations, _ = decode(transform(source.getvalue(), "speed", "3"))
+        self.assertEqual(sum(durations), 860)
+        self.assertTrue(all(d >= 20 and d % 10 == 0 for d in durations))
+        self.assertEqual(sum(100 if d <= 10 else d for d in durations), 860)
 
     def test_speed_invalid_and_extreme_factors(self):
         for option in ("0", "-1", "nan", "inf", "-inf", "abc", "1e308", "1e-308"):
@@ -317,14 +336,16 @@ class ImagingTests(unittest.TestCase):
             kwargs = {} if loop is None else {"loop": loop}
             frames[0].save(source, format="GIF", save_all=True,
                            append_images=frames[1:], duration=40, **kwargs)
-            for factor, count, total in (("2.5", 100, 1600), ("8", 50, 500)):
+            for factor, count, total in (("2.5", 60, 1600), ("8", 25, 500)):
                 with self.subTest(loop=loop, factor=factor):
                     result = transform(source.getvalue(), "speed", factor)
                     decoded, durations, output_loop = decode(result)
                     self.assertEqual(len(decoded), count)
                     self.assertEqual(sum(durations), total)
                     self.assertEqual(output_loop, loop)
-                    expected = frames if factor == "2.5" else frames[::2]
+                    self.assertTrue(all(d >= 20 for d in durations))
+                    expected = ([frames[i] for i in range(100) if i % 5 in (0, 2, 4)]
+                                if factor == "2.5" else frames[2::4])
                     self.assertEqual([f.getpixel((0, 0))[:3] for f in decoded],
                                      [f.getpixel((0, 0)) for f in expected])
 
